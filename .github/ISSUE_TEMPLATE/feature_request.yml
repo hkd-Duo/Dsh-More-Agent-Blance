@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a capability or a better default for the balancer
+title: "feat: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow is awkward today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should the panel, the pool model, or the routing rule do instead?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Sidebar panel UI
+        - Balancing style / weights
+        - Routing rule
+        - Provider or model support
+        - Docs
+        - Other
+    validations:
+      required: true

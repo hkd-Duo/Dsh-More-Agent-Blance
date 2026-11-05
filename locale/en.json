@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Team AI Balancer",
+    "description": "Distribute Agent Teams teammates and delegated subagents across a weighted pool of LLM providers (DeepSeek, GLM, others), while the Lead keeps its own model. Edited from the Plugins page."
+  }
+}

@@ -1,0 +1,22 @@
+# dsh-team-balancer — weighted multi-AI balancing for Agent Teams.
+#
+# Mounts one Host plugin row and its Web configuration page. The values below
+# are the factory defaults; the Plugins page editor saves overrides to
+# <DSH_HOME>/storages/team-balancer/config.json and applies them live without a
+# restart. The Lead Session is never rerouted.
+- insert:
+    - id: team-balancer
+      name: 'dsh-plugin-team-balancer'
+      config:
+        enabled: true
+        # Also balance ordinary `subagent` / `subagent_fork` children.
+        includeSubagents: false
+        # Weighted pool edited from the Web page. weight is a positive integer;
+        # a route that is not currently routable is skipped at runtime.
+        pool:
+          - provider: deepseek-official
+            model: deepseek-flash
+            weight: 1
+          - provider: zai
+            model: glm-5.3-flash
+            weight: 1
