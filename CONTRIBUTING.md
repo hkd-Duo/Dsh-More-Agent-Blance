@@ -56,7 +56,17 @@ Use the issue templates for bug reports and feature requests.
 ## Release checklist
 
 - [ ] `npm run check` and `npm test` pass
-- [ ] `CHANGELOG.md` has the version and date
+- [ ] `CHANGELOG.md` has the version and date (move `Unreleased` entries into it)
 - [ ] `package.json` version bumped (semver)
-- [ ] README install snippet and compatibility notes still accurate
-- [ ] tag `vX.Y.Z` and publish a GitHub release with the changelog section
+- [ ] README install snippet, badges and compatibility notes still accurate
+- [ ] tag and push:
+
+  ```bash
+  git tag -a vX.Y.Z -m "vX.Y.Z"
+  git push origin main vX.Y.Z
+  ```
+
+- [ ] publish a GitHub release for the tag
+  (<https://github.com/hkd-Duo/Dsh-More-Agent-Blance/releases/new>), using the
+  CHANGELOG section as the body; `.github/release.yml` provides categorized
+  auto-generated notes when GitHub generates them

@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-11-06
 
 ### Documentation
 
@@ -12,8 +12,8 @@ All notable changes to this project are documented here. The format follows
   and English ([docs/install.md](docs/install.md)): requirements and compatibility,
   desktop Plugin Manager steps, the non-Electron CLI caveat, local development, provider
   setup, first-run verification, upgrade, uninstall, FAQ and the compatibility table.
-
-## [0.2.0] - 2026-11-06
+- Add README badges (CI, version, license, supported DSH version), a SECURITY policy and
+  release-note categories for the GitHub repository.
 
 ### Added
 

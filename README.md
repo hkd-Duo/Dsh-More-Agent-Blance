@@ -1,5 +1,10 @@
 # dsh-plugin-team-balancer
 
+[![CI](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/actions/workflows/ci.yml/badge.svg)](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/actions/workflows/ci.yml)
+[![version](https://img.shields.io/badge/version-0.2.0-blue)](CHANGELOG.md)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![DSH](https://img.shields.io/badge/DSH-0.2.2--rc.1%2B-blue)](docs/install.md#9-compatibility)
+
 [中文](README.zh.md) · [Install guide](docs/install.md) · [How it works](docs/how-it-works.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [GitHub](https://github.com/hkd-Duo/Dsh-More-Agent-Blance)
 
 > **Weighted multi-AI balancing for DeepSeek Harness Agent Teams.**

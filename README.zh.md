@@ -1,5 +1,10 @@
 # dsh-plugin-team-balancer
 
+[![CI](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/actions/workflows/ci.yml/badge.svg)](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/actions/workflows/ci.yml)
+[![version](https://img.shields.io/badge/version-0.2.0-blue)](CHANGELOG.md)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![DSH](https://img.shields.io/badge/DSH-0.2.2--rc.1%2B-blue)](docs/install.zh.md#9-兼容性表)
+
 [English](README.md) · [安装教程](docs/install.zh.md) · [实现说明](docs/how-it-works.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md) · [GitHub](https://github.com/hkd-Duo/Dsh-More-Agent-Blance)
 
 > **为 DeepSeek Harness 的团队多 Agent 做「多 AI 均衡调度」。**
