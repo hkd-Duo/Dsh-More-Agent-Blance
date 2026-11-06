@@ -1,6 +1,6 @@
 # dsh-plugin-team-balancer
 
-[中文](README.zh.md) · [How it works](docs/how-it-works.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [GitHub](https://github.com/hkd-Duo/Dsh-More-Agent-Blance)
+[中文](README.zh.md) · [Install guide](docs/install.md) · [How it works](docs/how-it-works.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [GitHub](https://github.com/hkd-Duo/Dsh-More-Agent-Blance)
 
 > **Weighted multi-AI balancing for DeepSeek Harness Agent Teams.**
 > Teammates and delegated subagents rotate across DeepSeek, GLM (and any other mounted
@@ -47,15 +47,22 @@ Lead untouched.
 
 ## Install
 
-### Web UI
+> Step-by-step tutorial (providers, first-run verification, upgrades, uninstall and FAQ):
+> **[docs/install.md](docs/install.md)**.
 
-1. Open **Settings → Plugins → Plugin Manager → Add plugin**.
-2. Enter the GitHub address:
-   `github:hkd-Duo/Dsh-More-Agent-Blance`
-3. Confirm, wait for the install, then refresh the page (`Ctrl+R`) if the sidebar
-   icon does not appear immediately.
+### Desktop app (Plugin Manager)
 
-### CLI
+1. Open the **Plugins** panel in the left sidebar (or **Settings → Plugins**).
+2. Open **Plugin Manager → Add plugin** and enter
+   `github:hkd-Duo/Dsh-More-Agent-Blance`.
+3. Confirm and wait for the install, then press **Ctrl+R**. A **balance icon** appears in
+   the left rail; if not, check that the bundle and its row are enabled in
+   **Settings → Plugins**, then refresh again.
+
+### CLI (non-Electron profiles only)
+
+The desktop `desktop` profile is Electron-managed and must use the Plugin Manager. For a
+self-managed Web/TUI profile:
 
 ```bash
 dsh plugin --profile <profile> add github:hkd-Duo/Dsh-More-Agent-Blance
@@ -64,12 +71,12 @@ dsh plugin --profile <profile> add github:hkd-Duo/Dsh-More-Agent-Blance
 ### Local development
 
 ```bash
-dsh plugin --profile <profile> add link:/absolute/path/to/dsh-plugin-team-balancer
+dsh plugin --profile <profile> add link:/absolute/path/to/Dsh-More-Agent-Blance
 ```
 
-The package is a self-contained bundle: the patch inserts the `team-balancer` row,
-and the bundle's `dsh.client` declaration adds the sidebar panel and Plugins-page
-editor. No separate bundle is needed.
+The package is a self-contained bundle: the patch inserts the `team-balancer` row, and
+the bundle's `dsh.client` declaration adds the sidebar panel and Plugins-page editor. No
+separate bundle is needed.
 
 ## Use
 

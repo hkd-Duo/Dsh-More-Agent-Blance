@@ -1,6 +1,6 @@
 # dsh-plugin-team-balancer
 
-[English](README.md) · [实现说明](docs/how-it-works.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md) · [GitHub](https://github.com/hkd-Duo/Dsh-More-Agent-Blance)
+[English](README.md) · [安装教程](docs/install.zh.md) · [实现说明](docs/how-it-works.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md) · [GitHub](https://github.com/hkd-Duo/Dsh-More-Agent-Blance)
 
 > **为 DeepSeek Harness 的团队多 Agent 做「多 AI 均衡调度」。**
 > 队友（以及可选的普通子代理）按权重轮流分配给 DeepSeek、GLM 等已挂载的供应商，
@@ -38,13 +38,21 @@ GLM 的 profile 里，整支队伍仍然只跑一家：一份账单、一个限�
 
 ## 安装
 
-### 界面安装
+> 完整图文步骤（前置条件、供应商配置、首次验证、升级/卸载、FAQ）：
+> **[docs/install.zh.md](docs/install.zh.md)**。
 
-1. 打开 **设置 → 插件 → 插件管理器 → 添加插件**。
-2. 填入 GitHub 地址：`github:hkd-Duo/Dsh-More-Agent-Blance`
-3. 确认安装；如果侧边栏图标没有立刻出现，按 `Ctrl+R` 刷新页面即可。
+### 桌面应用（插件管理器）
 
-### 命令行安装
+1. 打开左侧边栏 **「插件」** 面板（或 **设置 → 插件**）。
+2. 进入 **插件管理器 → 添加插件**，输入
+   `github:hkd-Duo/Dsh-More-Agent-Blance`。
+3. 确认安装、等待 pnpm 完成，然后按 **Ctrl+R** 刷新页面。左侧图标区会出现 **天平
+   图标（均衡调度）**；若没有，去 **设置 → 插件 → 已安装插件** 确认 bundle 和行
+   都已启用，再刷新一次。
+
+### 命令行（仅限非 Electron 管理的 profile）
+
+桌面 `desktop` profile 由 Electron 独占管理，请用插件管理器。自建 Web/TUI profile：
 
 ```bash
 dsh plugin --profile <profile> add github:hkd-Duo/Dsh-More-Agent-Blance
@@ -53,7 +61,7 @@ dsh plugin --profile <profile> add github:hkd-Duo/Dsh-More-Agent-Blance
 ### 本地开发
 
 ```bash
-dsh plugin --profile <profile> add link:/绝对路径/dsh-plugin-team-balancer
+dsh plugin --profile <profile> add link:/绝对路径/Dsh-More-Agent-Blance
 ```
 
 包是自包含 bundle：patch 插入 `team-balancer` 行，`dsh.client` 声明提供侧边栏面板与
