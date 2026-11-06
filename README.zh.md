@@ -1,6 +1,6 @@
 # dsh-plugin-team-balancer
 
-[English](README.md) · [实现说明](docs/how-it-works.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md) · [GitHub](https://github.com/hkd-Duo/More-Agent-Blance)
+[English](README.md) · [实现说明](docs/how-it-works.md) · [更新日志](CHANGELOG.md) · [参与贡献](CONTRIBUTING.md) · [GitHub](https://github.com/hkd-Duo/Dsh-More-Agent-Blance)
 
 > **为 DeepSeek Harness 的团队多 Agent 做「多 AI 均衡调度」。**
 > 队友（以及可选的普通子代理）按权重轮流分配给 DeepSeek、GLM 等已挂载的供应商，
@@ -41,13 +41,13 @@ GLM 的 profile 里，整支队伍仍然只跑一家：一份账单、一个限�
 ### 界面安装
 
 1. 打开 **设置 → 插件 → 插件管理器 → 添加插件**。
-2. 填入 GitHub 地址：`github:hkd-Duo/More-Agent-Blance`
+2. 填入 GitHub 地址：`github:hkd-Duo/Dsh-More-Agent-Blance`
 3. 确认安装；如果侧边栏图标没有立刻出现，按 `Ctrl+R` 刷新页面即可。
 
 ### 命令行安装
 
 ```bash
-dsh plugin --profile <profile> add github:hkd-Duo/More-Agent-Blance
+dsh plugin --profile <profile> add github:hkd-Duo/Dsh-More-Agent-Blance
 ```
 
 ### 本地开发

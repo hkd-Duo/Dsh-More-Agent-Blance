@@ -1,6 +1,6 @@
 # dsh-plugin-team-balancer
 
-[中文](README.zh.md) · [How it works](docs/how-it-works.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [GitHub](https://github.com/hkd-Duo/More-Agent-Blance)
+[中文](README.zh.md) · [How it works](docs/how-it-works.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) · [GitHub](https://github.com/hkd-Duo/Dsh-More-Agent-Blance)
 
 > **Weighted multi-AI balancing for DeepSeek Harness Agent Teams.**
 > Teammates and delegated subagents rotate across DeepSeek, GLM (and any other mounted
@@ -51,14 +51,14 @@ Lead untouched.
 
 1. Open **Settings → Plugins → Plugin Manager → Add plugin**.
 2. Enter the GitHub address:
-   `github:hkd-Duo/More-Agent-Blance`
+   `github:hkd-Duo/Dsh-More-Agent-Blance`
 3. Confirm, wait for the install, then refresh the page (`Ctrl+R`) if the sidebar
    icon does not appear immediately.
 
 ### CLI
 
 ```bash
-dsh plugin --profile <profile> add github:hkd-Duo/More-Agent-Blance
+dsh plugin --profile <profile> add github:hkd-Duo/Dsh-More-Agent-Blance
 ```
 
 ### Local development

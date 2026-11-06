@@ -4,13 +4,13 @@
   "description": "Weighted multi-AI balancing for DeepSeek Harness Agent Teams: distribute teammates and delegated subagents across DeepSeek, GLM and other providers while the Lead keeps its own model. Edited from a first-class sidebar panel.",
   "license": "MIT",
   "author": "hkd-Duo",
-  "homepage": "https://github.com/hkd-Duo/More-Agent-Blance#readme",
+  "homepage": "https://github.com/hkd-Duo/Dsh-More-Agent-Blance#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hkd-Duo/More-Agent-Blance.git"
+    "url": "git+https://github.com/hkd-Duo/Dsh-More-Agent-Blance.git"
   },
   "bugs": {
-    "url": "https://github.com/hkd-Duo/More-Agent-Blance/issues"
+    "url": "https://github.com/hkd-Duo/Dsh-More-Agent-Blance/issues"
   },
   "keywords": [
     "deepseek-harness",
