@@ -12,8 +12,9 @@ All notable changes to this project are documented here. The format follows
   and English ([docs/install.md](docs/install.md)): requirements and compatibility,
   desktop Plugin Manager steps, the non-Electron CLI caveat, local development, provider
   setup, first-run verification, upgrade, uninstall, FAQ and the compatibility table.
-- Add README badges (CI, version, license, supported DSH version), a SECURITY policy and
-  release-note categories for the GitHub repository.
+- Add README badges (CI, version, license, supported DSH version), a SECURITY policy,
+  a code of conduct, a Release workflow that turns every version tag into a GitHub
+  Release, and release-note categories for the GitHub repository.
 
 ### Added
 

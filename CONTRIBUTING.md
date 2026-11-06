@@ -66,7 +66,13 @@ Use the issue templates for bug reports and feature requests.
   git push origin main vX.Y.Z
   ```
 
-- [ ] publish a GitHub release for the tag
-  (<https://github.com/hkd-Duo/Dsh-More-Agent-Blance/releases/new>), using the
-  CHANGELOG section as the body; `.github/release.yml` provides categorized
-  auto-generated notes when GitHub generates them
+- [ ] push the tag; the **Release** workflow
+  (`.github/workflows/release.yml`) creates a GitHub Release for every version tag
+  that lacks one, using the matching `CHANGELOG.md` section as its body:
+
+  ```bash
+  git push origin main vX.Y.Z
+  ```
+
+  (Creating or editing a release by hand on
+  <https://github.com/hkd-Duo/Dsh-More-Agent-Blance/releases> is also fine.)

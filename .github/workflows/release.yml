@@ -1,0 +1,48 @@
+name: Release
+
+# Turn every version tag into a GitHub Release. Runs on pushes to main so the
+# existing tags (and any future tag pushed without a matching release) are
+# covered without a personal access token: the workflow uses the repository's
+# built-in GITHUB_TOKEN with `contents: write`.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish releases for new tags
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create a release for every version tag without one
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          for tag in $(git tag -l 'v*' --sort=v:refname); do
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "release for $tag already exists; skipping"
+              continue
+            fi
+            version="${tag#v}"
+            awk -v ver="$version" '
+              $0 ~ "^## \\[" ver "\\]" { capture = 1; next }
+              capture && /^## \[/ { exit }
+              capture { print }
+            ' CHANGELOG.md > release-notes.md
+            if [ -s release-notes.md ]; then
+              gh release create "$tag" --title "$tag" --notes-file release-notes.md
+            else
+              gh release create "$tag" --title "$tag" --generate-notes
+            fi
+          done

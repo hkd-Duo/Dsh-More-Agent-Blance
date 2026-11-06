@@ -1,7 +1,7 @@
 # dsh-plugin-team-balancer
 
 [![CI](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/actions/workflows/ci.yml/badge.svg)](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/actions/workflows/ci.yml)
-[![version](https://img.shields.io/badge/version-0.2.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/github/v/tag/hkd-Duo/Dsh-More-Agent-Blance?label=version)](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/tags)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-0.2.2--rc.1%2B-blue)](docs/install.md#9-compatibility)
 
@@ -173,6 +173,11 @@ Both test files run with plain Node (>= 20) and no dependencies:
   history (existing Harness behavior); the conversation continues.
 - **Install-before-request only** — a request already in flight is never switched
   mid-step.
+
+## Community
+
+- [Contributing](CONTRIBUTING.md) · [Code of conduct](CODE_OF_CONDUCT.md) · [Security policy](SECURITY.md)
+- [Releases](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/releases) · [Tags](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/tags) · [Issues](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/issues)
 
 ## License
 

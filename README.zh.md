@@ -1,7 +1,7 @@
 # dsh-plugin-team-balancer
 
 [![CI](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/actions/workflows/ci.yml/badge.svg)](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/actions/workflows/ci.yml)
-[![version](https://img.shields.io/badge/version-0.2.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/github/v/tag/hkd-Duo/Dsh-More-Agent-Blance?label=version)](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/tags)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![DSH](https://img.shields.io/badge/DSH-0.2.2--rc.1%2B-blue)](docs/install.zh.md#9-兼容性表)
 
@@ -156,6 +156,11 @@ npm test        # 假 Cordis 的 Host 测试 + 假 ModuleLoader 的 Client 测�
 - **fork 子代理**：切换 provider 时历史 replay 元数据会按 Harness 既有行为降级为
   普通文本，不影响继续对话。
 - **只对之后的请求生效**：已经在飞的一步请求不会被中途切换。
+
+## 社区
+
+- [参与贡献](CONTRIBUTING.md) · [行为准则](CODE_OF_CONDUCT.md) · [安全策略](SECURITY.md)
+- [发布版本](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/releases) · [标签](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/tags) · [问题反馈](https://github.com/hkd-Duo/Dsh-More-Agent-Blance/issues)
 
 ## License
 
