@@ -177,6 +177,7 @@ assert(state0.pool.length === 2, 'state reports two pool routes')
 assert(state0.assignments.length === 2, 'state reports two live assignments')
 assert(state0.providers.some((provider) => provider.id === 'zai' && provider.models.length === 2), 'state lists zai models for the UI')
 assert(state0.routes.every((route) => route.available === true), 'both configured routes are available')
+assert(state0.pluginVersion === '0.2.0', 'state reports the plugin version (proves the migrated code is running)')
 
 // ---- save a new weighted pool -------------------------------------------
 res = fakeResponse()
@@ -190,7 +191,8 @@ const state1 = JSON.parse(res.body)
 assert(res.status === 200 && state1.pool[0].provider === 'zai' && state1.pool[0].weight === 2, 'POST config stores the new weighted pool')
 assert(existsSync(join(home, 'storages', 'team-balancer', 'config.json')), 'overrides persisted under DSH_HOME')
 assert(JSON.parse(readFileSync(join(home, 'storages', 'team-balancer', 'config.json'), 'utf8')).pool[0].weight === 2, 'persisted JSON matches the saved pool')
-assert(!state1.assignments.some((record) => record.agentId === b.id), 'idle teammate B is rebalanced out of the in-memory map')
+assert(state1.assignments.some((record) => record.agentId === b.id && record.model === 'deepseek-flash'), 'idle teammate B is re-routed live to DeepSeek under the new 2:1 cycle')
+assert(b.options.model === 'deepseek-flash', 'idle teammate B AgentOptions follow the re-route')
 assert(state1.assignments.some((record) => record.agentId === a.id), 'running teammate A keeps its assignment')
 
 // ---- ordinal with the new weights: teammate C -> GLM (2:1 cycle) --------
@@ -211,6 +213,55 @@ await resetRoute.handler(fakeRequest('POST'), res)
 const state2 = JSON.parse(res.body)
 assert(res.status === 200 && state2.pool[0].provider === 'deepseek-official' && state2.pool[0].weight === 1, 'reset restores the bundle defaults')
 assert(!existsSync(join(home, 'storages', 'team-balancer', 'config.json')), 'reset removes the stored overrides')
+
+// ---- DeepSeek Harness 0.2.2+: route through agent.model.select() ---------
+// The 0.2.2 loop fixes the step model before prompt assembly and rejects any
+// `agent/request` route change, so the plugin must select before that point.
+function modelAgent(id, initialSelection) {
+  let selection = { ...initialSelection }
+  const calls = []
+  const agent = {
+    id,
+    status: 'running',
+    options: {
+      provider: selection.provider,
+      model: selection.model,
+      ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+    },
+    session: { header: { parentSession: lead.id } },
+    ctx: {},
+    calls,
+  }
+  agent.model = {
+    current: () => ({ ...selection }),
+    select: (next) => {
+      calls.push({ ...next })
+      selection = { ...next }
+      agent.options.provider = next.provider
+      agent.options.model = next.model
+      if (next.reasoningEffort === undefined) delete agent.options.reasoningEffort
+      else agent.options.reasoningEffort = next.reasoningEffort
+    },
+  }
+  return agent
+}
+
+const d = modelAgent('agent-d', { provider: 'deepseek-official', model: 'deepseek-flash' })
+agents.set(d.id, d)
+teammates.push({ id: d.id, name: 'delta', role: 'teammate' })
+await emit('agent/created', { agent: d })
+assert(d.calls.length === 1 && d.calls[0].provider === 'zai' && d.calls[0].model === 'glm-5.3-flash', 'new-API teammate D selects GLM through agent.model.select()')
+const requestD = await request(d, { provider: 'zai', model: 'glm-5.3-flash' })
+assert(requestD.provider === 'zai' && requestD.model === 'glm-5.3-flash', 'new-API request keeps the fixed selection (agent/request is not rewritten)')
+
+const e = modelAgent('agent-e', { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high' })
+agents.set(e.id, e)
+teammates.push({ id: e.id, name: 'epsilon', role: 'teammate' })
+await emit('agent/created', { agent: e })
+assert(
+  e.calls.length === 1 && e.calls[0].provider === 'deepseek-official' && e.calls[0].reasoningEffort === 'high',
+  'new-API same-route assignment keeps the inherited reasoning effort',
+)
 
 // ---- disposal ------------------------------------------------------------
 for (const disposers of handlers.values()) for (const listener of [...disposers]) void listener

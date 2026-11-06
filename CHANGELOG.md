@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-06
+
+### Added
+
+- Support for DeepSeek Harness **0.2.2+** `AgentModel` routing: each delegated
+  child's route is fixed through `agent.model.select()` before step preparation, which
+  is the only supported way to change a step's model in the new loop.
+
+### Changed
+
+- The `agent/request` route rewrite is now a compatibility fallback used only when an
+  Agent does not expose `agent.model`. On 0.2.2+ the listener returns the frozen
+  configuration unchanged, because the loop rejects a route change there.
+- Saving the pool now re-routes live **idle** children through the selection API
+  instead of dropping their assignment; running children keep their current model.
+
+### Fixed
+
+- Teammates failed on DSH `0.2.2-rc.1` with
+  `agent/request proposed "<route>" after step preparation fixed "<route>"; use agent.model.select() before step preparation`.
+  Assignment now happens at creation through the selection API, and a teammate
+  assigned a route different from the Lead's runs on it again.
+
 ## [0.1.0] - 2026-11-05
 
 ### Added

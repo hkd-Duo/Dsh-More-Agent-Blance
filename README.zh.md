@@ -102,9 +102,10 @@ Host HTTP 路由（仅本机同源可访问）：
 
 完整数据流见 [docs/how-it-works.md](docs/how-it-works.md)。简述：
 
-1. `agent/created` 为每个被委派的子 Agent 分配粘性路由，并回写 `AgentOptions`，
-   让团队面板、会话模型选择器和 `{{model}}` persona 保持一致。
-2. 一个 Host 级 `agent/request` 瀑布监听把该子 Agent 每次模型请求固定到这条路由。
+1. `agent/created` 为每个被委派的子 Agent 分配粘性路由，回写 `AgentOptions`，并在
+   DSH 0.2.2+ 上通过 `agent.model.select()` 在步前准备阶段固定本步模型。
+2. DSH 0.2.2+ 的路由完全由该选择承担；旧内核上仍由 Host 级 `agent/request`
+   瀑布监听作为回退来应用同一条路由。
 3. 根 Session 跳过；路由用 `ctx.llm.resolveModelInfo` 校验（60 秒缓存），
    `llm/adapters-updated` 时失效重算。
 
@@ -128,6 +129,9 @@ npm test        # 假 Cordis 的 Host 测试 + 假 ModuleLoader 的 Client 测�
 
 - 需要挂载了 Agent Teams 实验 bundle
   （`@deepseek-ai/dsh-experimental-agent-team-profile`）的 DSH 桌面/Web profile。
+- **DSH 0.2.2+**：路由使用 `agent.model.select()`（新内核在提示词组装前固定本步模型）。
+- **DSH ≤ 0.2.1**：插件检测到没有 `agent.model` API 时，自动回退到 `agent/request`
+  瀑布改写路由。
 - 侧边栏面板依赖 Web UI；无界面的 CLI-only profile 里 Host 半仍会调度，
   HTTP 路由仍可用。
 

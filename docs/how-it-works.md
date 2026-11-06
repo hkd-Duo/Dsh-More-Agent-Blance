@@ -41,9 +41,32 @@ changes can be reviewed against the actual seams instead of guesses.
   the Team roster, the session model selector, and the system prompt's `{{model}}`
   variable consistent with the real route.
 
-## Request rewriting
+## Request routing
 
-One Host-level waterfall listener is registered:
+The route is fixed through one of two mechanisms, detected per Agent.
+
+### DSH 0.2.2+ — `agent.model.select()` (primary)
+
+The 0.2.2 loop captures the step model before prompt assembly and before
+`agent/pre-step`, keeps it through retries, and rejects any route change proposed by the
+`agent/request` waterfall. The plugin therefore selects the route while handling
+`agent/created`, before the first step starts:
+
+```js
+agent.model.select({ provider, model, ...(effort === undefined ? {} : { reasoningEffort: effort }) })
+```
+
+`AgentModel.select()` appends a durable `model/selection` event; the `modelSelection`
+projection folds it into `pending`/`lastUsed`. That makes the choice visible to the
+model and the UI (the `{{model}}` persona and the selector follow it), sticky across
+steps and cold resumes, and idempotent on resume because selecting the same route is a
+no-op. A same-route assignment preserves the inherited reasoning effort; a route change
+omits it (or uses the route's configured effort).
+
+### DSH ≤ 0.2.1 — `agent/request` fallback
+
+When an Agent does not expose `agent.model`, the plugin keeps one Host-level waterfall
+listener:
 
 ```js
 ctx.on('agent/request', async (payload, next) => {
@@ -56,10 +79,9 @@ ctx.on('agent/request', async (payload, next) => {
 - Same provider/model → the base configuration is returned unchanged, preserving the
   inherited reasoning effort and output cap.
 - Different route → the listener returns only `{ provider, model }` plus an optional
-  configured effort, so an inherited effort (for example DeepSeek's `high`) is not sent
-  to a model that rejects it.
-- The loop logs the resulting `request/header`, which is the durable evidence of the
-  actual route.
+  configured effort, so an inherited effort is not sent to a model that rejects it.
+- On 0.2.2+ this listener returns the frozen configuration untouched, because the loop
+  would reject a route change there.
 
 ## Config lifecycle
 
@@ -71,8 +93,9 @@ The UI writes through the Host routes, not through the profile patch:
    to `$DSH_HOME/storages/team-balancer/config.json`.
 3. The in-memory effective config switches immediately; route/catalog caches are
    invalidated.
-4. Assignments of **idle** children are dropped so they re-derive with the new cycle on
-   their next request. Running children keep their current route until they go idle.
+4. Live **idle** children are re-routed through the selection API (the recorded route on
+   older cores); running children keep their current model; unloaded children re-derive
+   their route from the durable roster ordinal when their Session resumes.
 
 `POST /reset` deletes the override file and restores the bundle-patch defaults.
 
@@ -91,8 +114,9 @@ The UI writes through the Host routes, not through the profile patch:
 
 `subagent-model-selection` constrains the official `subagent` tool. Team teammates are
 created by the Team domain through the subagent **provider** seam, which does not carry
-a model selection, so this plugin enforces the route at the `agent/request` seam that
-every delegated Agent passes through. Both mechanisms can coexist.
+a model selection, so this plugin assigns the route at the Agent lifecycle seam
+(`agent.model.select()` on 0.2.2+, the recorded route elsewhere). Both mechanisms can
+coexist.
 
 ## Failure modes to keep in mind
 

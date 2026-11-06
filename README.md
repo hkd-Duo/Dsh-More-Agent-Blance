@@ -116,10 +116,11 @@ Host HTTP routes (loopback + same-origin only):
 
 See [docs/how-it-works.md](docs/how-it-works.md) for the full data flow. In short:
 
-1. `agent/created` assigns each delegated child a sticky route and publishes it onto
-   `AgentOptions`, so the Team roster, session selector and `{{model}}` persona agree.
-2. One Host-level `agent/request` waterfall listener forces that route on every model
-   request of that child.
+1. `agent/created` assigns each delegated child a sticky route, publishes it onto
+   `AgentOptions`, and fixes it through `agent.model.select()` on DSH 0.2.2+ (the
+   loop freezes the step model before prompt assembly there).
+2. On DSH 0.2.2+ routing lives entirely in that selection; on older cores a Host-level
+   `agent/request` waterfall listener applies the same route as a fallback.
 3. Root Sessions are skipped; the pool is validated with `ctx.llm.resolveModelInfo`
    (60 s cache) and recomputed when adapters change.
 
@@ -143,6 +144,9 @@ Both test files run with plain Node (>= 20) and no dependencies:
 
 - DeepSeek Harness desktop/Web profile with the Agent Teams experimental bundle
   (`@deepseek-ai/dsh-experimental-agent-team-profile`) mounted.
+- **DSH 0.2.2+**: routing uses `agent.model.select()`; this is the supported path.
+- **DSH ≤ 0.2.1**: the plugin detects the missing `agent.model` API and falls back to
+  the `agent/request` waterfall route rewrite.
 - The sidebar panel needs the Web UI; in a headless/CLI-only profile the Host half
   still balances and its HTTP routes remain available.
 

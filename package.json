@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-team-balancer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Weighted multi-AI balancing for DeepSeek Harness Agent Teams: distribute teammates and delegated subagents across DeepSeek, GLM and other providers while the Lead keeps its own model. Edited from a first-class sidebar panel.",
   "license": "MIT",
   "author": "hkd-Duo",

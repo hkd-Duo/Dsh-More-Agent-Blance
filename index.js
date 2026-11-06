@@ -387,8 +387,53 @@ export function apply(ctx, rawConfig) {
       if (record.reasoningEffort !== undefined) options.reasoningEffort = record.reasoningEffort
       else if (!sameRoute) delete options.reasoningEffort
     } catch {
-      /* Options may be read-only in a future core; the request listener still routes. */
+      /* Options may be read-only in a future core; the model selection still routes. */
     }
+  }
+
+  /**
+   * Whether this Agent exposes the 0.2.2+ `agent.model` selection API. The new
+   * loop fixes the step model before prompt assembly, so routing must go through
+   * `agent.model.select()` instead of the `agent/request` waterfall.
+   */
+  function usesAgentModelApi(agent) {
+    const model = agent?.model
+    return model !== undefined && model !== null && typeof model.select === 'function'
+  }
+
+  /** Read the Agent's current routed selection when the core exposes it. */
+  function currentSelectionOf(agent) {
+    try {
+      const model = agent?.model
+      if (model === undefined || model === null || typeof model.current !== 'function') return undefined
+      const selection = model.current()
+      if (selection === undefined || selection === null) return undefined
+      if (typeof selection.provider !== 'string' || typeof selection.model !== 'string') return undefined
+      return selection
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Apply one route through the 0.2.2+ AgentModel API; returns the effort used. */
+  function selectRoute(agent, route) {
+    const current = currentSelectionOf(agent)
+    let effort = route.reasoningEffort
+    if (effort === undefined && current !== undefined && current.provider === route.provider && current.model === route.model) {
+      effort = current.reasoningEffort
+    }
+    if (usesAgentModelApi(agent)) {
+      try {
+        agent.model.select({
+          provider: route.provider,
+          model: route.model,
+          ...(effort === undefined ? {} : { reasoningEffort: effort }),
+        })
+      } catch (error) {
+        logger.warn(`team-balancer: agent.model.select failed for ${agent.id}: ${describeError(error)}`)
+      }
+    }
+    return effort
   }
 
   /** Assign and remember one child Agent's route. */
@@ -417,31 +462,52 @@ export function apply(ctx, rawConfig) {
       logger.warn('team-balancer: no routable route in the pool right now; child keeps the inherited model')
       return undefined
     }
+    const effort = selectRoute(agent, route)
     const record = {
       agentId: agent.id,
       kind,
       ordinal,
       provider: route.provider,
       model: route.model,
-      ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
+      ...(effort === undefined ? {} : { reasoningEffort: effort }),
       ...(teammateName === undefined ? {} : { teammateName }),
       assignedAt: now(),
     }
     assignments.set(agent.id, record)
     publishRoute(agent, record)
     logger.info(
-      `team-balancer: ${kind} ${teammateName === undefined ? String(agent.id).slice(0, 8) : `"${teammateName}"`} -> ${record.provider}/${record.model}`,
+      `team-balancer: ${kind} ${teammateName === undefined ? String(agent.id).slice(0, 8) : `"${teammateName}"`} -> ${record.provider}/${record.model}` +
+        `${usesAgentModelApi(agent) ? ' (agent.model.select)' : ' (agent/request)'}`,
     )
     return record
   }
 
-  /** Reassign idle children so a saved pool reaches them on their next request. */
-  function dropIdleAssignments() {
+  /**
+   * Re-route children that can still change their step model: live idle Agents
+   * are updated through the selection API, running ones keep the current model,
+   * and unloaded ones are re-assigned when their Session resumes.
+   */
+  async function rebalanceIdleAssignments() {
     const agents = ctx.get('agents')
-    if (agents === undefined || typeof agents.get !== 'function') return
-    for (const [agentId] of assignments) {
-      const agent = agents.get(agentId)
-      if (agent === undefined || agent.status !== 'running') assignments.delete(agentId)
+    for (const [agentId, record] of [...assignments]) {
+      const agent = agents !== undefined && typeof agents.get === 'function' ? agents.get(agentId) : undefined
+      if (agent === undefined) {
+        assignments.delete(agentId)
+        continue
+      }
+      if (agent.status === 'running') continue
+      const route = await routeForOrdinal(record.ordinal)
+      if (route === undefined) continue
+      const effort = selectRoute(agent, route)
+      const next = {
+        ...record,
+        provider: route.provider,
+        model: route.model,
+      }
+      if (effort === undefined) delete next.reasoningEffort
+      else next.reasoningEffort = effort
+      assignments.set(agentId, next)
+      publishRoute(agent, next)
     }
   }
 
@@ -450,6 +516,7 @@ export function apply(ctx, rawConfig) {
     const [providers, routes] = await Promise.all([providerCatalog(), inspectedPool()])
     return {
       ok: true,
+      pluginVersion: '0.2.0',
       enabled: effective.enabled,
       includeSubagents: effective.includeSubagents,
       pool: effective.pool,
@@ -470,7 +537,7 @@ export function apply(ctx, rawConfig) {
     stored = nextStored
     effective = mergeConfig(baseConfig, stored)
     invalidate()
-    dropIdleAssignments()
+    await rebalanceIdleAssignments()
     return stateSnapshot()
   }
 
@@ -480,7 +547,7 @@ export function apply(ctx, rawConfig) {
     stored = {}
     effective = mergeConfig(baseConfig, stored)
     invalidate()
-    dropIdleAssignments()
+    await rebalanceIdleAssignments()
     return stateSnapshot()
   }
 
@@ -498,6 +565,9 @@ export function apply(ctx, rawConfig) {
     const base = await next()
     const agent = payload?.agent
     if (agent === undefined) return base
+    // 0.2.2+: the loop fixes the step model before prompt assembly and rejects a
+    // route change here; `agent.model.select()` at assignment time owns routing.
+    if (usesAgentModelApi(agent)) return base
     let record = assignments.get(agent.id)
     if (record === undefined) {
       try {
