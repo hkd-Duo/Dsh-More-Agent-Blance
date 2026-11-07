@@ -39,6 +39,13 @@ changes can be reviewed against the actual seams instead of guesses.
   capability. With `spread` (default) the cycle contains every configured route once
   before weight slots repeat: `1:2` becomes `[0, 1, 1]`; with `spread` off it is plain
   smooth weighted round robin.
+- With `idleFirst` (default on), creation checks how many live children each route is
+  currently running (`agent.status === 'running'`, read from the assignment map). A
+  capability-matching route with no running child wins; if the preferred route is busy and
+  another route is idle, that idle route is used even when it weakens the capability
+  match; when every route is busy the normal weighted/capability pick applies. The check
+  is creation-only — `rebalanceIdleAssignments` calls `routeFor(..., false)` so a stored
+  ordinal keeps its route.
 - With `capabilityRouting` (default on), a name prefix selects a bucket:
   `vision-*`/`image-*`/`ui-*` → vision; `code-*`/`table-*`/`data-*`/`api-*` → code.
   Routes advertise buckets from their provider/model text (`glm`/`zai` → vision,
@@ -126,7 +133,7 @@ The UI writes through the Host routes, not through the profile patch:
 1. `POST /config` validates the patch (booleans, 1–20 routes, exact provider/model,
    integer weight 1–100).
 2. The override object
-   `{enabled?, autoTeam?, spread?, capabilityRouting?, emphasis?, includeSubagents?, pool?}`
+   `{enabled?, autoTeam?, spread?, idleFirst?, capabilityRouting?, emphasis?, includeSubagents?, pool?}`
    is persisted atomically to `$DSH_HOME/storages/team-balancer/config.json`.
 3. The in-memory effective config switches immediately; route/catalog caches are
    invalidated.

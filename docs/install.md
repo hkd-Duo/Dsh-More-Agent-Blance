@@ -9,7 +9,7 @@
 
 | Item | Requirement |
 |---|---|
-| DeepSeek Harness | Desktop or Web; plugin `0.3.0` supports **DSH 0.2.2-rc.1+** (`agent.model.select()` + delegation policy) and **0.2.1 or older** (automatic fallback) |
+| DeepSeek Harness | Desktop or Web; plugin `0.3.1` supports **DSH 0.2.2-rc.1+** (`agent.model.select()` + delegation policy + idle-first) and **0.2.1 or older** (automatic fallback) |
 | Team capability | Agent Teams bundle enabled (`@deepseek-ai/dsh-experimental-agent-team-profile`, on by default on desktop) |
 | Providers | At least one; for multi-AI balancing configure **DeepSeek official** + **GLM (zai)** |
 | Credentials | DeepSeek account or `DEEPSEEK_API_KEY`; GLM needs `ZAI_API_KEY` |
@@ -102,9 +102,9 @@ The Lead and the user's own chats are never rerouted.
   third-party plugin updates and rolls back a failed hot update).
 - Or remove and re-add the same GitHub address.
 - For a linked local checkout: `git pull`, then restart the app.
-- Keep the plugin at **0.3.0+**: 0.3.0 adds the Lead delegation policy and durable
-  assignments; 0.1.0 fails on DSH 0.2.2 with `agent/request proposed … use
-  agent.model.select()`.
+- Keep the plugin at **0.3.1+**: 0.3.0 adds the Lead delegation policy and durable
+  assignments, 0.3.1 adds idle-first routing for parallel work; 0.1.0 fails on DSH 0.2.2
+  with `agent/request proposed … use agent.model.select()`.
 
 ## 7. Uninstall
 
@@ -130,7 +130,7 @@ install from a local directory (method 3).
 enabled in Settings → Plugins, and read the diagnostics shown by the Plugin Manager.
 
 **Teammates fail with `agent/request proposed … use agent.model.select()`** — the plugin is
-0.1.0 on DSH 0.2.2; upgrade to 0.3.0+.
+0.1.0 on DSH 0.2.2; upgrade to 0.3.1+.
 
 **Weights set, but the Lead still runs one agent and only splits when I insist** — before
 0.3.0 the plugin only routed teammates that already existed; the Lead never split work on
@@ -150,6 +150,10 @@ models to task type* on, then have the Lead name visual teammates `vision-*` / `
 former to GLM and the latter to DeepSeek; for unrecognized names pick the fallback
 *emphasis* (code-first or vision-first). Mixed requests can run one of each in parallel.
 
+**GLM is busy, will a new parallel teammate still go to GLM?** — no, with *New tasks prefer
+an idle provider* on (default), a new child goes to the idle provider. Capability-matched
+idle routes win first; a busy candidate is skipped while any provider is idle.
+
 **An idle teammate still shows the Lead model in the Team roster** — the core roster
 falls back to the Lead model for unloaded members; the *Current assignments* table and
 `request/header` are authoritative.
@@ -164,6 +168,8 @@ routes accept loopback same-origin requests only.
 
 | Plugin | DSH | Routing |
 |---|---|---|
+| 0.3.1 | 0.2.2-rc.1+ | `agent.model.select()` + Lead delegation policy + idle-first |
+| 0.3.1 | 0.2.1 or older | `agent/request` fallback + idle-first |
 | 0.3.0 | 0.2.2-rc.1+ | `agent.model.select()` + Lead delegation policy |
 | 0.3.0 | 0.2.1 or older | `agent/request` fallback |
 | 0.2.0 | 0.2.2-rc.1+ | `agent.model.select()` |

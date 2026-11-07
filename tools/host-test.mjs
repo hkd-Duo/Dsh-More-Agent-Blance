@@ -161,6 +161,7 @@ assert(policySection.order === 601, 'policy section sits just after TEAM_POLICY 
 const policyText = policySection.text()
 assert(policyText.includes('spawn_teammate') && policyText.includes('2-4 teammates'), 'policy tells the Lead to split work into 2-4 teammates')
 assert(policyText.includes('deepseek-official/deepseek-flash') && policyText.includes('zai/glm-5.3-flash'), 'policy names the weighted pool (no manual model choice)')
+assert(policyText.includes('idle model'), 'policy explains that new parallel work goes to an idle model')
 
 // ---- teammate A: ordinal 0 -> DeepSeek ----------------------------------
 const a = { id: 'agent-a', status: 'running', options: { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high' }, session: { header: { parentSession: lead.id } }, ctx: {} }
@@ -217,9 +218,11 @@ assert(state0.pool.length === 2, 'state reports two pool routes')
 assert(state0.assignments.length === 2, 'state reports two live assignments')
 assert(state0.providers.some((provider) => provider.id === 'zai' && provider.models.length === 2), 'state lists zai models for the UI')
 assert(state0.routes.every((route) => route.available === true), 'both configured routes are available')
-assert(state0.pluginVersion === '0.3.0', 'state reports the plugin version (proves the migrated code is running)')
+assert(state0.pluginVersion === '0.3.1', 'state reports the plugin version (proves the migrated code is running)')
 assert(state0.autoTeam === true && state0.spread === true, 'state exposes autoTeam and spread defaults')
+assert(state0.idleFirst === true, 'state exposes the idle-first default')
 assert(state0.capabilityRouting === true && state0.emphasis === 'auto', 'state exposes capabilityRouting and emphasis defaults')
+assert(state0.routes.every((route) => typeof route.running === 'number'), 'state reports the running child count per route')
 const glmCapabilities = state0.capabilities.find((entry) => entry.provider === 'zai')?.tags ?? []
 const deepseekCapabilities = state0.capabilities.find((entry) => entry.provider === 'deepseek-official')?.tags ?? []
 assert(glmCapabilities.includes('vision'), 'state marks GLM as a vision-capable route')
@@ -383,6 +386,42 @@ assert(j.options.provider === 'zai', 'unrecognized teammate follows the vision e
 res = fakeResponse()
 await configRoute.handler(fakeRequest('POST', { emphasis: 'graphics' }), res)
 assert(res.status === 400, 'unknown emphasis is rejected with 400')
+
+// ---- idle-first: a new parallel child avoids the busy provider -----------
+res = fakeResponse()
+await configRoute.handler(fakeRequest('POST', {
+  idleFirst: true,
+  capabilityRouting: false,
+  spread: true,
+  pool: [
+    { provider: 'deepseek-official', model: 'deepseek-flash', weight: 2 },
+    { provider: 'zai', model: 'glm-5.3-flash', weight: 1 },
+  ],
+}), res)
+assert(res.status === 200 && JSON.parse(res.body).idleFirst === true, 'idle-first config saved')
+// Only DeepSeek is working; GLM is idle. The 2:1 spread cycle at ordinal 10
+// picks GLM, at ordinal 11 picks DeepSeek.
+for (const agent of agents.values()) agent.status = 'idle'
+a.status = 'running'
+const k = { id: 'agent-k', status: 'idle', options: { provider: 'deepseek-official', model: 'deepseek-flash' }, session: { header: { parentSession: lead.id } }, ctx: {} }
+agents.set(k.id, k)
+teammates.push({ id: k.id, name: 'kappa', role: 'teammate' })
+await emit('agent/created', { agent: k })
+assert(k.options.provider === 'zai', 'ordinal 10 goes to idle GLM')
+const l = { id: 'agent-l', status: 'idle', options: { provider: 'deepseek-official', model: 'deepseek-flash' }, session: { header: { parentSession: lead.id } }, ctx: {} }
+agents.set(l.id, l)
+teammates.push({ id: l.id, name: 'lambda', role: 'teammate' })
+await emit('agent/created', { agent: l })
+assert(l.options.provider === 'zai' && l.options.model === 'glm-5.3-flash', 'new parallel child skips busy DeepSeek and takes idle GLM')
+// Turning the switch off restores the plain weighted pick even while busy.
+res = fakeResponse()
+await configRoute.handler(fakeRequest('POST', { idleFirst: false }), res)
+assert(res.status === 200 && JSON.parse(res.body).idleFirst === false, 'idle-first can be turned off')
+const m = { id: 'agent-m', status: 'idle', options: { provider: 'zai', model: 'glm-5.3-flash' }, session: { header: { parentSession: lead.id } }, ctx: {} }
+agents.set(m.id, m)
+teammates.push({ id: m.id, name: 'mu', role: 'teammate' })
+await emit('agent/created', { agent: m })
+assert(m.options.provider === 'deepseek-official', 'with idle-first off the weighted cycle repeats the busy route')
 
 // ---- disposal ------------------------------------------------------------
 for (const disposers of handlers.values()) for (const listener of [...disposers]) void listener

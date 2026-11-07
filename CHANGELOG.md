@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-07
+
+### Added
+
+- **Idle-first parallel routing** (`idleFirst`, default on): when a new teammate is
+  created while another provider is already running work, the balancer sends the new
+  child to a provider that is idle. Example: GLM is working, DeepSeek is idle, so a new
+  parallel request goes to DeepSeek even if the weighted cycle or capability rule would
+  repeat GLM. Capability-matched idle routes win first; if every capable route is busy
+  the balancer borrows any idle route, and only falls back to the normal weighted pick
+  when all providers are busy.
+- State API reports `idleFirst` and a live `running` count per route.
+- Sidebar panel toggle **New tasks prefer an idle provider**, saved in the same config
+  file and applied live.
+
+### Fixed
+
+- `idleFirst` was not merged with stored overrides, so the state API could report
+  `undefined` instead of the default.
+
 ## [0.3.0] - 2026-11-07
 
 ### Added

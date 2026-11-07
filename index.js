@@ -11,7 +11,8 @@
  *   GET  /dsh-team-balancer/state   -> effective config, routable providers,
  *                                      validated pool, live assignments
  *   POST /dsh-team-balancer/config  -> save {enabled, includeSubagents,
- *                                      autoTeam, spread, pool}
+ *                                      autoTeam, spread, idleFirst,
+ *                                      capabilityRouting, emphasis, pool}
  *   POST /dsh-team-balancer/reset   -> drop stored overrides, back to bundle defaults
  *
  * Routing mechanism: every child Agent gets a sticky route from the weighted
@@ -45,7 +46,7 @@ const ROUTE_TTL_MS = 60 * 1000
 const CONFIG_FILE = 'config.json'
 const ASSIGNMENTS_FILE = 'assignments.json'
 /** Version reported by /state; bump together with package.json. */
-const VERSION = '0.3.0'
+const VERSION = '0.3.1'
 
 /** Bundle-patch defaults used until the user saves overrides. */
 const DEFAULT_POOL = [
@@ -57,6 +58,8 @@ const DEFAULT_POOL = [
 const DEFAULT_AUTO_TEAM = true
 /** Default for spreading distinct providers before repeating one. */
 const DEFAULT_SPREAD = true
+/** Default for sending a new parallel child to a provider that is not busy. */
+const DEFAULT_IDLE_FIRST = true
 /** Prompt section name; unique so it never shadows a core section. */
 const GUIDANCE_SECTION = 'team-balancer:policy'
 
@@ -218,6 +221,8 @@ function normalizeConfig(raw, options = {}) {
   if (options.partial !== true && config.autoTeam === undefined) config.autoTeam = DEFAULT_AUTO_TEAM
   if (source.spread !== undefined) config.spread = source.spread === true
   if (options.partial !== true && config.spread === undefined) config.spread = DEFAULT_SPREAD
+  if (source.idleFirst !== undefined) config.idleFirst = source.idleFirst === true
+  if (options.partial !== true && config.idleFirst === undefined) config.idleFirst = DEFAULT_IDLE_FIRST
   if (source.capabilityRouting !== undefined) config.capabilityRouting = source.capabilityRouting === true
   if (options.partial !== true && config.capabilityRouting === undefined) config.capabilityRouting = DEFAULT_CAPABILITY_ROUTING
   if (source.emphasis !== undefined && EMPHASIS_MODES.has(source.emphasis)) config.emphasis = source.emphasis
@@ -231,7 +236,7 @@ function normalizeConfig(raw, options = {}) {
 /**
  * Validate an incoming config patch from the Web page.
  * @param {unknown} body parsed JSON body.
- * @returns {{enabled?: boolean, includeSubagents?: boolean, autoTeam?: boolean, spread?: boolean, pool?: object[]}}
+ * @returns {{enabled?: boolean, includeSubagents?: boolean, autoTeam?: boolean, spread?: boolean, idleFirst?: boolean, capabilityRouting?: boolean, emphasis?: string, pool?: object[]}}
  */
 function validatePatch(body) {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Error('请求体必须是对象')
@@ -251,6 +256,10 @@ function validatePatch(body) {
   if ('spread' in body) {
     if (typeof body.spread !== 'boolean') throw new Error('spread 必须是布尔值')
     patch.spread = body.spread
+  }
+  if ('idleFirst' in body) {
+    if (typeof body.idleFirst !== 'boolean') throw new Error('idleFirst 必须是布尔值')
+    patch.idleFirst = body.idleFirst
   }
   if ('capabilityRouting' in body) {
     if (typeof body.capabilityRouting !== 'boolean') throw new Error('capabilityRouting 必须是布尔值')
@@ -451,6 +460,7 @@ export function apply(ctx, rawConfig) {
       includeSubagents: overrides.includeSubagents === undefined ? base.includeSubagents : overrides.includeSubagents,
       autoTeam: overrides.autoTeam === undefined ? base.autoTeam : overrides.autoTeam,
       spread: overrides.spread === undefined ? base.spread : overrides.spread,
+      idleFirst: overrides.idleFirst === undefined ? base.idleFirst : overrides.idleFirst,
       capabilityRouting: overrides.capabilityRouting === undefined ? base.capabilityRouting : overrides.capabilityRouting,
       emphasis: overrides.emphasis === undefined ? base.emphasis : overrides.emphasis,
       pool: overrides.pool === undefined ? base.pool : overrides.pool,
@@ -627,24 +637,65 @@ export function apply(ctx, rawConfig) {
     return cached.usable[cached.cycle[ordinal % cached.cycle.length]]
   }
 
+  /** Stable key for one provider/model pair. */
+  function routeKey(route) {
+    return `${route.provider}\u0000${route.model}`
+  }
+
+  /** Live running child count per route; dormant children are not busy. */
+  function runningRouteCounts() {
+    const agents = ctx.get('agents')
+    const counts = new Map()
+    for (const record of assignments.values()) {
+      const agent = agents !== undefined && typeof agents.get === 'function' ? agents.get(record.agentId) : undefined
+      if (agent === undefined || agent.status !== 'running') continue
+      const key = routeKey(record)
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    return counts
+  }
+
+  /** Pick one route from a candidate subset through the weighted spread cycle. */
+  function pickFromCycle(routes, ordinal) {
+    if (routes.length === 0) return undefined
+    if (routes.length === 1) return routes[0]
+    const cycle = weightedCycle(routes, effective.spread === true)
+    return routes[cycle[ordinal % cycle.length]]
+  }
+
   /**
    * Pick the route for one child. A recognized capability prefers the routes
    * that advertise it (still rotating by weight inside that subset); otherwise
-   * the weighted spread cycle decides.
+   * the weighted spread cycle decides. With `idleFirst`, a newly created child
+   * avoids a provider that is already running work: if the weighted pick is
+   * busy and another route is idle, the idle route wins — even when the
+   * capability filter would have chosen the busy one. When every route is
+   * busy the normal weighted choice is kept.
    * @param {number} ordinal creation ordinal
    * @param {'vision'|'code'|undefined} capability task hint
+   * @param {boolean} [preferIdle] apply the idle-first rule (new assignments only)
    */
-  async function routeFor(ordinal, capability) {
+  async function routeFor(ordinal, capability, preferIdle = true) {
     const cached = await currentCycle()
     if (cached.usable.length === 0) return undefined
-    if (capability !== undefined) {
-      const candidates = cached.usable.filter((route) => capabilityTagsFor(route).includes(capability))
-      if (candidates.length > 0) {
-        const cycle = weightedCycle(candidates, effective.spread === true)
-        return candidates[cycle[ordinal % cycle.length]]
+    const preferred = capability === undefined ? [] : cached.usable.filter((route) => capabilityTagsFor(route).includes(capability))
+    const base = preferred.length > 0 ? preferred : cached.usable
+    if (preferIdle && effective.idleFirst === true) {
+      const counts = runningRouteCounts()
+      const idleOf = (routes) => routes.filter((route) => (counts.get(routeKey(route)) ?? 0) === 0)
+      // A new parallel child should use a model that is not working right now,
+      // even if the weighted cycle would repeat the busy one.
+      const idlePreferred = idleOf(base)
+      if (idlePreferred.length > 0) return pickFromCycle(idlePreferred, ordinal)
+      // The capability-matching routes are all busy: borrow any idle route so a
+      // parallel request still goes to the other model.
+      if (base !== cached.usable) {
+        const idleAny = idleOf(cached.usable)
+        if (idleAny.length > 0) return pickFromCycle(idleAny, ordinal)
       }
+      // Every route is busy: keep the usual weighted choice.
     }
-    return cached.usable[cached.cycle[ordinal % cached.cycle.length]]
+    return pickFromCycle(base, ordinal)
   }
 
   /** Capability hint for one child, from its teammate name and the emphasis setting. */
@@ -758,6 +809,7 @@ export function apply(ctx, rawConfig) {
       '',
       'A team balancer is active in this session. It assigns every teammate its provider and model automatically from a weighted pool, preferring the model that fits the teammate\'s discipline. Never choose a model for a teammate, and never ask the user which model to use.',
       `- Weighted pool: ${describePool()}. ${emphasisLine}`,
+      '- When one provider is already busy and another one is idle, a newly created parallel teammate is routed to the idle model even if the weights would repeat the busy one.',
       '- Name teammates by their primary discipline so the balancer can route them: `vision-*` for image, visual, screenshot/OCR, UI, frontend or design work; `code-*`, `table-*` or `data-*` for code, tables, data, SQL, API, refactoring, debugging or tests. Use a descriptive name for anything else.',
       '- When a request has two or more independent workstreams (separate files or modules, separate research questions, separate verification angles), split it: call `spawn_teammate` once per workstream, typically 2-4 teammates. Give each one a complete brief, a disjoint write scope, and a clear deliverable; keep one owner per file.',
       '- Combine discipline-specific teammates when the request mixes media: for example one `vision-*` teammate for screenshots/UI inspection and one `code-*` or `table-*` teammate for implementation, data or tables.',
@@ -900,7 +952,9 @@ export function apply(ctx, rawConfig) {
       const agent = agents !== undefined && typeof agents.get === 'function' ? agents.get(agentId) : undefined
       if (agent === undefined) continue
       if (agent.status === 'running') continue
-      const route = await routeFor(record.ordinal, record.capability)
+      // Rebalancing follows the configured weights; idle-first only applies to
+      // newly created parallel children, not to moving existing idle ones.
+      const route = await routeFor(record.ordinal, record.capability, false)
       if (route === undefined) continue
       const effort = selectRoute(agent, route)
       const next = {
@@ -922,6 +976,7 @@ export function apply(ctx, rawConfig) {
     const [providers, routes] = await Promise.all([providerCatalog(), inspectedPool()])
     const live = ctx.get('agents')
     const isLive = (id) => live !== undefined && typeof live.get === 'function' && live.get(id) !== undefined
+    const running = runningRouteCounts()
     return {
       ok: true,
       pluginVersion: VERSION,
@@ -929,6 +984,7 @@ export function apply(ctx, rawConfig) {
       includeSubagents: effective.includeSubagents,
       autoTeam: effective.autoTeam,
       spread: effective.spread,
+      idleFirst: effective.idleFirst,
       capabilityRouting: effective.capabilityRouting,
       emphasis: effective.emphasis,
       capabilities: effective.pool.map((route) => ({
@@ -941,7 +997,7 @@ export function apply(ctx, rawConfig) {
       stored,
       storagePath: storePath,
       assignmentsPath,
-      routes,
+      routes: routes.map((route) => ({ ...route, running: running.get(routeKey(route)) ?? 0 })),
       providers,
       assignments: [...assignments.values()]
         .sort((left, right) => left.assignedAt - right.assignedAt)

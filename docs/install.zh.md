@@ -9,7 +9,7 @@
 
 | 项目 | 要求 |
 |---|---|
-| DeepSeek Harness | 桌面版或 Web 版；插件 `0.3.0` 支持 **DSH 0.2.1 及更早**（自动回退）和 **0.2.2-rc.1+**（`agent.model.select()` + 组队策略） |
+| DeepSeek Harness | 桌面版或 Web 版；插件 `0.3.1` 支持 **DSH 0.2.1 及更早**（自动回退）和 **0.2.2-rc.1+**（`agent.model.select()` + 组队策略 + 空闲优先） |
 | 团队能力 | 已启用 Agent Teams bundle（`@deepseek-ai/dsh-experimental-agent-team-profile`，桌面版默认启用） |
 | 模型供应商 | 至少一个可用；想「多 AI 均衡」建议配置 **DeepSeek 官方** + **GLM（zai）** 两家 |
 | 凭据 | DeepSeek 账号已登录，或已配置 `DEEPSEEK_API_KEY`；GLM 需配置 `ZAI_API_KEY` |
@@ -121,8 +121,9 @@ dsh plugin --profile <profile> add link:/绝对路径/Dsh-More-Agent-Blance
   热更新失败会尝试恢复旧版）。
 - 或先 **移除**，再按方式一重新添加同一个 GitHub 地址。
 - 本地 link 安装：`git pull` 后 **重启应用**。
-- 升级后确认插件版本 ≥ **0.3.0**：0.3.0 起主 Agent 会收到组队策略、分配会持久化；
-  0.1.0 在 DSH 0.2.2 上会报 `agent/request proposed … use agent.model.select()` 错误。
+- 升级后确认插件版本 ≥ **0.3.1**：0.3.0 起主 Agent 会收到组队策略、分配会持久化，
+  0.3.1 起新并行请求优先分给空闲供应商；0.1.0 在 DSH 0.2.2 上会报
+  `agent/request proposed … use agent.model.select()` 错误。
 
 ---
 
@@ -152,13 +153,17 @@ dsh plugin --profile <profile> add link:/绝对路径/Dsh-More-Agent-Blance
 显示启用失败，查看 Host 日志/插件详情里的诊断信息。
 
 **Q3：队友报 `agent/request proposed "…" after step preparation fixed "…"; use agent.model.select()`。**
-这是插件 0.1.0 与 DSH 0.2.2 的兼容问题，升级到 **0.3.0** 即可（本仓库已修复）。
+这是插件 0.1.0 与 DSH 0.2.2 的兼容问题，升级到 **0.3.1** 即可（本仓库已修复）。
 
 **Q3.5：权重设了，但主 Agent 还是一次只开一个 Agent、必须我强调才多开？**
 0.3.0 之前插件只负责“已经创建出来的队友”分模型；主 Agent 不主动拆任务，所以看不出
-均衡效果。升级到 **0.3.0**，确认面板里「主 Agent 主动拆给多个队友」为开；之后把
+均衡效果。升级到 **0.3.1**，确认面板里「主 Agent 主动拆给多个队友」为开；之后把
 **可拆成多个独立部分** 的任务直接交给主 Agent 即可，它会按策略创建 2–4 个队友。
 小任务或强耦合任务仍会单 Agent 处理（这是刻意的）。
+
+**Q3.6：GLM 正在干活，新开的并行队友还会分到 GLM 吗？**
+默认不会。确认面板「新任务优先空闲模型」为开；新队友会先找当前没有在跑任务的供应商，
+例如 GLM 忙、DeepSeek 空闲时新队友直接走 DeepSeek。只有所有供应商都忙时才回到加权选择。
 
 **Q4：GLM 路由显示不可用？**
 确认 `ZAI_API_KEY` 已配置、模型 id 正确（如 `glm-5.3-flash`），并在 设置 → 模型
@@ -191,6 +196,8 @@ dsh plugin --profile <profile> add link:/绝对路径/Dsh-More-Agent-Blance
 
 | 插件版本 | DSH 版本 | 路由方式 |
 |---|---|---|
+| 0.3.1 | 0.2.2-rc.1 及以上 | `agent.model.select()` + 主 Agent 组队策略 + 空闲优先 |
+| 0.3.1 | 0.2.1 及更早 | 自动回退 `agent/request` 瀑布 + 空闲优先 |
 | 0.3.0 | 0.2.2-rc.1 及以上 | `agent.model.select()` + 主 Agent 组队策略 |
 | 0.3.0 | 0.2.1 及更早 | 自动回退 `agent/request` 瀑布 |
 | 0.2.0 | 0.2.2-rc.1 及以上 | `agent.model.select()`（推荐） |

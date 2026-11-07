@@ -34,6 +34,9 @@ GLM 的 profile 里，整支队伍仍然只跑一家：一份账单、一个限�
   小任务或强耦合任务保持单 Agent。可在面板里关闭。
 - **先铺开再重复**：第一轮让每个已配置供应商各出现一次，所以即使权重是 2:1，前两个
   队友也已经跑在不同模型上。
+- **并行请求优先空闲模型**：新队友创建时，如果某个供应商正在干活、另一个供应商空闲，
+  就直接分给空闲的那家。例如 GLM 正在跑、DeepSeek 空闲，新的并行队友会去 DeepSeek，
+  而不是按权重继续重复 GLM；能力匹配的空闲路由优先，全部忙时才回到正常加权选择。
 - **按任务能力强项匹配模型**：名字以 `vision-` / `image-` / `ui-` 开头的队友优先分到
   视觉能力强的路由（默认 GLM），以 `code-` / `table-` / `data-` / `api-` 开头的优先分到
   代码/表格能力强的路由（默认 DeepSeek）；名字看不出类型时可按「侧重」选项选
@@ -88,8 +91,8 @@ dsh plugin --profile <profile> add link:/绝对路径/Dsh-More-Agent-Blance
 1. 点左侧边栏的**天平图标**（在内置面板之后）。
 2. 选一个**搭配样式**，或直接编辑模型池：供应商 / 模型 / 权重、增删行。
 3. 按需打开「启用均衡调度」「主 Agent 主动拆给多个队友」「优先铺开不同供应商」
-   「按任务类型匹配模型」「也调度普通子代理」；按任务类型匹配打开时，再选择
-   未识别名字的「侧重」（自动 / 不侧重 / 代码表格优先 / 图像视觉优先）。
+   「新任务优先空闲模型」「按任务类型匹配模型」「也调度普通子代理」；按任务类型匹配
+   打开时，再选择未识别名字的「侧重」（自动 / 不侧重 / 代码表格优先 / 图像视觉优先）。
 4. 点 **保存并生效**。
 5. 交给主 Agent 一个有多个独立部分的任务；开着组队策略时它会创建多个队友，
    「当前分配」表会显示每个队友实际跑在哪。需要图像/视觉工作时让主 Agent 用
@@ -110,6 +113,7 @@ $DSH_HOME/storages/team-balancer/config.json
 | `enabled` | `true` | 总开关；关闭后子 Agent 恢复继承主模型 |
 | `autoTeam` | `true` | 给主 Agent 注入组队策略，把可拆解的大任务分给 2–4 个队友 |
 | `spread` | `true` | 第一轮先让每个供应商各出现一次，再按权重重复 |
+| `idleFirst` | `true` | 新并行队友优先分给当前空闲的供应商，避免重复忙碌的那家 |
 | `capabilityRouting` | `true` | 按队友名字/侧重把视觉任务分给 GLM、代码表格任务分给 DeepSeek |
 | `emphasis` | `auto` | 名字看不出任务类型时的后备侧重：`auto`、`balanced`、`code`、`vision` |
 | `includeSubagents` | `false` | 是否也调度普通 `subagent` / `subagent_fork` |
@@ -121,22 +125,25 @@ $DSH_HOME/storages/team-balancer/config.json
 分配规则：队友序号 `N`（durable roster 创建顺序）取 `cycle[N % cycleLength]`。
 开启 `spread` 时，cycle 先让每条路由各出现一次，再填剩余权重位：
 `deepseek 1 : glm 2` → `[deepseek, glm, glm]`；关闭时是纯平滑加权轮转：
-`[glm, glm, deepseek]`。
+`[glm, glm, deepseek]`。开启 `idleFirst` 时，新建子 Agent 先找当前没有在跑任务的
+供应商；首选路由忙、另一家空闲时就用空闲那家。该规则只在创建时生效，已有队友和
+rebalance 保持原路由。
 
 Host HTTP 路由（仅本机同源可访问）：
 
 | 路由 | 方法 | 用途 |
 |---|---|---|
 | `/dsh-team-balancer/state` | GET | 生效配置、可用供应商/模型、路由可用性、当前分配 |
-| `/dsh-team-balancer/config` | POST | 校验、持久化并热应用 `{enabled, autoTeam, spread, capabilityRouting, emphasis, includeSubagents, pool}` |
+| `/dsh-team-balancer/config` | POST | 校验、持久化并热应用 `{enabled, autoTeam, spread, idleFirst, capabilityRouting, emphasis, includeSubagents, pool}` |
 | `/dsh-team-balancer/reset` | POST | 删除覆盖项，回到 bundle 默认值 |
 
 ## 实现
 
 完整数据流见 [docs/how-it-works.md](docs/how-it-works.md)。简述：
 
-1. `agent/created` 为每个被委派的子 Agent 分配粘性路由，回写 `AgentOptions`，并在
-   DSH 0.2.2+ 上通过 `agent.model.select()` 在步前准备阶段固定本步模型。
+1. `agent/created` 为每个被委派的子 Agent 分配粘性路由（另一家正在跑时优先空闲
+   供应商），回写 `AgentOptions`，并在 DSH 0.2.2+ 上通过 `agent.model.select()`
+   在步前准备阶段固定本步模型。
 2. DSH 0.2.2+ 的路由完全由该选择承担；旧内核上仍由 Host 级 `agent/request`
    瀑布监听作为回退来应用同一条路由。
 3. 插件挂载时用 `agents.list()` 收养存活 Agent：根 Agent 通过自己的 `systemPrompt`

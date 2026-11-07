@@ -39,6 +39,10 @@ Lead untouched.
   balancer. Small or tightly coupled tasks stay single-agent. Can be turned off.
 - **Spread before repeat** — the first rotation gives every configured provider one slot,
   so the first two teammates already run on different models even with a 2:1 weight.
+- **Idle-first for parallel work** — a new teammate goes to a provider that is not
+  currently running work. If GLM is busy and DeepSeek is idle, the next parallel child
+  takes DeepSeek instead of repeating GLM. Capability-matched idle routes win first; when
+  everything is busy the normal weighted pick resumes.
 - **Capability-aware routing** — a teammate named `vision-*`, `image-*` or `ui-*`
   prefers the vision-capable route (GLM by default); `code-*`, `table-*`, `data-*` or
   `api-*` prefers the code/table route (DeepSeek). For unrecognized names an
@@ -102,9 +106,10 @@ separate bundle is needed.
 1. Click the **balance icon** in the left sidebar (after the built-in panels).
 2. Pick a **balancing style**, or edit the pool: provider, model, weight, add/remove.
 3. Toggle *Enable balancing*, *Lead splits work across teammates*, *Spread providers
-   before repeating*, *Match models to task type*, and *Balance ordinary subagents too*
-   as needed. With capability routing on, pick the fallback *emphasis* for unrecognized
-   names (auto, balanced, code-first or vision-first).
+   before repeating*, *New tasks prefer an idle provider*, *Match models to task type*,
+   and *Balance ordinary subagents too* as needed. With capability routing on, pick the
+   fallback *emphasis* for unrecognized names (auto, balanced, code-first or
+   vision-first).
 4. Press **Save and apply**.
 5. Ask the Lead to do a task with independent parts; with the delegation policy on it
    creates several teammates, and the *Current assignments* table shows which provider
@@ -127,6 +132,7 @@ $DSH_HOME/storages/team-balancer/config.json
 | `enabled` | `true` | Master switch. When off, delegated children inherit the Lead model. |
 | `autoTeam` | `true` | Add the Lead delegation policy that splits substantial tasks across 2-4 teammates. |
 | `spread` | `true` | First rotation gives every pool route one slot before weights repeat. |
+| `idleFirst` | `true` | Send a new parallel teammate to a provider that is not currently running work. |
 | `capabilityRouting` | `true` | Route vision/UI teammates to GLM and code/table teammates to DeepSeek by name. |
 | `emphasis` | `auto` | Fallback when a name reveals nothing: `auto`, `balanced`, `code`, `vision`. |
 | `includeSubagents` | `false` | Also balance ordinary `subagent` / `subagent_fork` children. |
@@ -139,22 +145,27 @@ Assignment rule: teammate ordinal `N` (creation order in the durable Team roster
 receives `cycle[N % cycleLength]`. With `spread`, the cycle contains every route once
 first, then fills the remaining weight slots: `deepseek 1 : glm 2` → `[deepseek, glm, glm]`.
 With `spread` off it is plain smooth weighted round robin: `[glm, glm, deepseek]`.
+With `idleFirst` on, a new child first looks for a route whose provider has no running
+child; if the preferred route is busy and another provider is idle, the idle provider is
+used. This applies only at creation time — rebalances and live teammates keep their
+route.
 
 Host HTTP routes (loopback + same-origin only):
 
 | Route | Method | Purpose |
 |---|---|---|
 | `/dsh-team-balancer/state` | GET | effective config, providers/models, route availability, live assignments |
-| `/dsh-team-balancer/config` | POST | validate, persist and live-apply `{enabled, autoTeam, spread, capabilityRouting, emphasis, includeSubagents, pool}` |
+| `/dsh-team-balancer/config` | POST | validate, persist and live-apply `{enabled, autoTeam, spread, idleFirst, capabilityRouting, emphasis, includeSubagents, pool}` |
 | `/dsh-team-balancer/reset` | POST | drop stored overrides, back to bundle defaults |
 
 ## How it works
 
 See [docs/how-it-works.md](docs/how-it-works.md) for the full data flow. In short:
 
-1. `agent/created` assigns each delegated child a sticky route, publishes it onto
-   `AgentOptions`, and fixes it through `agent.model.select()` on DSH 0.2.2+ (the
-   loop freezes the step model before prompt assembly there).
+1. `agent/created` assigns each delegated child a sticky route (idle-first when another
+   provider is currently busy), publishes it onto `AgentOptions`, and fixes it through
+   `agent.model.select()` on DSH 0.2.2+ (the loop freezes the step model before prompt
+   assembly there).
 2. On DSH 0.2.2+ routing lives entirely in that selection; on older cores a Host-level
    `agent/request` waterfall listener applies the same route as a fallback.
 3. On mount the plugin adopts live Agents (`agents.list()`): root Agents receive the
