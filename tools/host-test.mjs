@@ -15,8 +15,40 @@ const assert = (condition, message) => {
 }
 
 // ---- fake services -------------------------------------------------------
-const lead = { id: 'lead-1', status: 'running', options: { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high' }, session: { header: {} }, ctx: {} }
+const promptSections = new Map()
+const promptScope = {
+  systemPrompt: {
+    section(section) {
+      promptSections.set(section.name, section)
+      return () => {
+        if (promptSections.get(section.name) === section) promptSections.delete(section.name)
+      }
+    },
+    getSectionOrder(name) {
+      return name === 'TEAM_POLICY' ? 600 : 0
+    },
+  },
+}
+const lead = {
+  id: 'lead-1',
+  status: 'running',
+  options: { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high' },
+  session: { header: {} },
+  ctx: {
+    inject(names, callback) {
+      if (!names.every((name) => services[name] !== undefined)) return undefined
+      callback(promptScope)
+      return {
+        dispose() {
+          promptSections.clear()
+        },
+      }
+    },
+  },
+}
 const agents = new Map([[lead.id, lead]])
+agents.list = () => [...agents.values()]
+agents.roots = () => [...agents.values()].filter((agent) => agent.session?.header?.parentSession === undefined)
 const teammates = [] // roster entries besides the lead
 const liveRoster = () => [{ id: lead.id, name: 'lead', role: 'lead' }, ...teammates]
 
@@ -60,7 +92,7 @@ const webServer = {
 }
 
 const handlers = new Map()
-const services = { agents, llm, agentTeams, webServer }
+const services = { agents, llm, agentTeams, webServer, systemPrompt: promptScope.systemPrompt }
 function fakeChild(extra = {}) {
   return {
     logger: console,
@@ -122,6 +154,14 @@ assert(plugin.name === 'team-balancer', 'plugin exports a name')
 assert(typeof plugin.apply === 'function', 'plugin exports apply')
 assert(routes.length === 3, 'three HTTP routes registered when webServer is present')
 
+// ---- Lead guidance -------------------------------------------------------
+assert(promptSections.has('team-balancer:policy'), 'mount installs the Lead delegation policy section')
+const policySection = promptSections.get('team-balancer:policy')
+assert(policySection.order === 601, 'policy section sits just after TEAM_POLICY (order 601)')
+const policyText = policySection.text()
+assert(policyText.includes('spawn_teammate') && policyText.includes('2-4 teammates'), 'policy tells the Lead to split work into 2-4 teammates')
+assert(policyText.includes('deepseek-official/deepseek-flash') && policyText.includes('zai/glm-5.3-flash'), 'policy names the weighted pool (no manual model choice)')
+
 // ---- teammate A: ordinal 0 -> DeepSeek ----------------------------------
 const a = { id: 'agent-a', status: 'running', options: { provider: 'deepseek-official', model: 'deepseek-flash', reasoningEffort: 'high' }, session: { header: { parentSession: lead.id } }, ctx: {} }
 agents.set(a.id, a)
@@ -177,7 +217,20 @@ assert(state0.pool.length === 2, 'state reports two pool routes')
 assert(state0.assignments.length === 2, 'state reports two live assignments')
 assert(state0.providers.some((provider) => provider.id === 'zai' && provider.models.length === 2), 'state lists zai models for the UI')
 assert(state0.routes.every((route) => route.available === true), 'both configured routes are available')
-assert(state0.pluginVersion === '0.2.0', 'state reports the plugin version (proves the migrated code is running)')
+assert(state0.pluginVersion === '0.3.0', 'state reports the plugin version (proves the migrated code is running)')
+assert(state0.autoTeam === true && state0.spread === true, 'state exposes autoTeam and spread defaults')
+assert(state0.capabilityRouting === true && state0.emphasis === 'auto', 'state exposes capabilityRouting and emphasis defaults')
+const glmCapabilities = state0.capabilities.find((entry) => entry.provider === 'zai')?.tags ?? []
+const deepseekCapabilities = state0.capabilities.find((entry) => entry.provider === 'deepseek-official')?.tags ?? []
+assert(glmCapabilities.includes('vision'), 'state marks GLM as a vision-capable route')
+assert(deepseekCapabilities.includes('code'), 'state marks DeepSeek as a code-capable route')
+assert(state0.guidance.installed === 1 && state0.guidance.renders >= 1, 'state reports the Lead policy as installed and rendered')
+assert(existsSync(join(home, 'storages', 'team-balancer', 'assignments.json')), 'assignments persisted under DSH_HOME')
+const savedAssignments = JSON.parse(readFileSync(join(home, 'storages', 'team-balancer', 'assignments.json'), 'utf8'))
+assert(
+  Array.isArray(savedAssignments) && savedAssignments.some((record) => record.agentId === 'agent-a' && record.provider === 'deepseek-official'),
+  'persisted assignment records carry agent id and route',
+)
 
 // ---- save a new weighted pool -------------------------------------------
 res = fakeResponse()
@@ -201,6 +254,15 @@ agents.set(c.id, c)
 teammates.push({ id: c.id, name: 'gamma', role: 'teammate' })
 await emit('agent/created', { agent: c })
 assert(c.options.provider === 'zai', 'teammate C follows the new 2:1 cycle (ordinal 2 -> GLM)')
+
+// ---- autoTeam toggle disables the Lead policy text ------------------------
+res = fakeResponse()
+await configRoute.handler(fakeRequest('POST', { autoTeam: false }), res)
+assert(res.status === 200 && JSON.parse(res.body).autoTeam === false, 'autoTeam can be turned off')
+assert(policySection.text() === '', 'policy section renders nothing when autoTeam is off')
+res = fakeResponse()
+await configRoute.handler(fakeRequest('POST', { autoTeam: true }), res)
+assert(JSON.parse(res.body).autoTeam === true, 'autoTeam can be turned back on')
 
 // ---- invalid save rejected ----------------------------------------------
 res = fakeResponse()
@@ -262,6 +324,65 @@ assert(
   e.calls.length === 1 && e.calls[0].provider === 'deepseek-official' && e.calls[0].reasoningEffort === 'high',
   'new-API same-route assignment keeps the inherited reasoning effort',
 )
+
+// ---- spread-first: 1:2 pool starts with one of each provider -------------
+res = fakeResponse()
+await configRoute.handler(fakeRequest('POST', {
+  spread: true,
+  pool: [
+    { provider: 'deepseek-official', model: 'deepseek-flash', weight: 1 },
+    { provider: 'zai', model: 'glm-5.3-flash', weight: 2 },
+  ],
+}), res)
+assert(res.status === 200, 'spread config saved')
+const f = { id: 'agent-f', status: 'idle', options: { provider: 'deepseek-official', model: 'deepseek-flash' }, session: { header: { parentSession: lead.id } }, ctx: {} }
+agents.set(f.id, f)
+teammates.push({ id: f.id, name: 'zeta', role: 'teammate' })
+await emit('agent/created', { agent: f })
+assert(f.options.provider === 'zai', 'spread-first gives ordinal 5 GLM (1:2 cycle is DeepSeek, GLM, GLM)')
+
+// ---- capability routing: vision names -> GLM, code names -> DeepSeek ----
+res = fakeResponse()
+await configRoute.handler(fakeRequest('POST', {
+  capabilityRouting: true,
+  emphasis: 'auto',
+  pool: [
+    { provider: 'deepseek-official', model: 'deepseek-flash', weight: 1 },
+    { provider: 'zai', model: 'glm-5.3-flash', weight: 2 },
+  ],
+}), res)
+assert(res.status === 200, 'capability routing config saved')
+const g = { id: 'agent-g', status: 'idle', options: { provider: 'deepseek-official', model: 'deepseek-flash' }, session: { header: { parentSession: lead.id } }, ctx: {} }
+agents.set(g.id, g)
+teammates.push({ id: g.id, name: 'vision-ocr', role: 'teammate' })
+await emit('agent/created', { agent: g })
+assert(g.options.provider === 'zai' && g.options.model === 'glm-5.3-flash', 'vision-* teammate routes to GLM even when the weighted cycle would pick DeepSeek')
+const h = { id: 'agent-h', status: 'idle', options: { provider: 'zai', model: 'glm-5.3-flash' }, session: { header: { parentSession: lead.id } }, ctx: {} }
+agents.set(h.id, h)
+teammates.push({ id: h.id, name: 'code-table', role: 'teammate' })
+await emit('agent/created', { agent: h })
+assert(h.options.provider === 'deepseek-official' && h.options.model === 'deepseek-flash', 'code-* teammate routes to DeepSeek')
+
+// ---- emphasis fallback for unrecognized names ---------------------------
+res = fakeResponse()
+await configRoute.handler(fakeRequest('POST', { emphasis: 'code' }), res)
+assert(res.status === 200, 'emphasis=code saved')
+const i = { id: 'agent-i', status: 'idle', options: { provider: 'zai', model: 'glm-5.3-flash' }, session: { header: { parentSession: lead.id } }, ctx: {} }
+agents.set(i.id, i)
+teammates.push({ id: i.id, name: 'omega', role: 'teammate' })
+await emit('agent/created', { agent: i })
+assert(i.options.provider === 'deepseek-official', 'unrecognized teammate follows the code emphasis fallback')
+res = fakeResponse()
+await configRoute.handler(fakeRequest('POST', { emphasis: 'vision' }), res)
+assert(res.status === 200, 'emphasis=vision saved')
+const j = { id: 'agent-j', status: 'idle', options: { provider: 'deepseek-official', model: 'deepseek-flash' }, session: { header: { parentSession: lead.id } }, ctx: {} }
+agents.set(j.id, j)
+teammates.push({ id: j.id, name: 'sigma', role: 'teammate' })
+await emit('agent/created', { agent: j })
+assert(j.options.provider === 'zai', 'unrecognized teammate follows the vision emphasis fallback')
+res = fakeResponse()
+await configRoute.handler(fakeRequest('POST', { emphasis: 'graphics' }), res)
+assert(res.status === 400, 'unknown emphasis is rejected with 400')
 
 // ---- disposal ------------------------------------------------------------
 for (const disposers of handlers.values()) for (const listener of [...disposers]) void listener

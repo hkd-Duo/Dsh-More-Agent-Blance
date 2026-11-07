@@ -18,8 +18,10 @@ changes can be reviewed against the actual seams instead of guesses.
 ┌────────▼───────────────────────────────────────────────────────┐
 │ Host plugin (team-balancer)                                    │
 │  GET  /state   POST /config   POST /reset                      │
-│  config store: $DSH_HOME/storages/team-balancer/config.json    │
-│  agent/created  → assign sticky route + publish AgentOptions   │
+│  config:      $DSH_HOME/storages/team-balancer/config.json     │
+│  assignments: $DSH_HOME/storages/team-balancer/assignments.json│
+│  mount → agents.list(): adopt live children + Lead policy      │
+│  agent/created  → assign sticky route / install Lead policy    │
 │  agent/request  → force route on every model request           │
 │  llm/adapters-updated → invalidate route/catalog caches        │
 └────────────────────────────────────────────────────────────────┘
@@ -33,13 +35,47 @@ changes can be reviewed against the actual seams instead of guesses.
   ordinal is their index among teammate rows in `ctx.agentTeams.listMembers(root)`.
   The roster is durable Team state, so an ordinal survives cold resume and restart.
 - Ordinary subagents (opt-in) use a process-local cursor.
-- The route is `cycle[ordinal % cycleLength]` where `cycle` is generated from the
-  configured weights with smooth weighted round robin, e.g. weights `2:1` produce
-  `[0, 1, 0]`.
-- The chosen route is written into the in-memory assignment map and published onto the
-  child's `AgentOptions` (`provider`, `model`, optional `reasoningEffort`). That keeps
-  the Team roster, the session model selector, and the system prompt's `{{model}}`
-  variable consistent with the real route.
+- The route is `cycle[ordinal % cycleLength]`, unless the teammate advertises a
+  capability. With `spread` (default) the cycle contains every configured route once
+  before weight slots repeat: `1:2` becomes `[0, 1, 1]`; with `spread` off it is plain
+  smooth weighted round robin.
+- With `capabilityRouting` (default on), a name prefix selects a bucket:
+  `vision-*`/`image-*`/`ui-*` → vision; `code-*`/`table-*`/`data-*`/`api-*` → code.
+  Routes advertise buckets from their provider/model text (`glm`/`zai` → vision,
+  `deepseek` → code), and the assignment picks from the capable subset with the same
+  weighted cycle. If no name matches, `emphasis` (`auto`, `balanced`, `code`, `vision`)
+  supplies a fallback bucket; `auto`/`balanced` leave the plain cycle in charge.
+- The chosen route is written into the assignment map, persisted to
+  `assignments.json`, and published onto the child's `AgentOptions` (`provider`, `model`,
+  optional `reasoningEffort`). That keeps the Team roster, the session model selector, and
+  the system prompt's `{{model}}` variable consistent with the real route.
+- On mount the plugin walks `ctx.agents.list()`. A live child without an assignment gets
+  one (optionally deferred until `agent/status` reports `idle`); a live child with a
+  persisted record gets that route selected/published again. Root Agents get the Lead
+  policy instead. Disposed Agents keep their record, so a resumed Session restores it.
+
+## Lead delegation policy
+
+`autoTeam` (default on) attaches a short `systemPrompt` section named
+`team-balancer:policy` to **root Agents only**, through the Agent's own scope:
+
+```js
+agent.ctx.inject(['systemPrompt'], (scope) => {
+  scope.systemPrompt.section({
+    name: 'team-balancer:policy',
+    order: scope.systemPrompt.getSectionOrder('TEAM_POLICY') + 1, // 601
+    text: () => (enabled && autoTeam ? guidanceText() : ''),
+  })
+})
+```
+
+The text tells the Lead to split requests with two or more independent workstreams across
+2–4 `spawn_teammate` calls, give each a disjoint write scope and complete brief, keep
+integration, and leave model selection to the balancer. Small or tightly coupled tasks
+stay single-agent. The section is installed for Agents already live at mount and for each
+`agent/created` root; the fiber is disposed on `agent/disposed` and plugin teardown.
+`/state` reports `guidance.installed` and `guidance.renders` so the injection is
+observable.
 
 ## Request routing
 
@@ -89,8 +125,9 @@ The UI writes through the Host routes, not through the profile patch:
 
 1. `POST /config` validates the patch (booleans, 1–20 routes, exact provider/model,
    integer weight 1–100).
-2. The override object `{enabled?, includeSubagents?, pool?}` is persisted atomically
-   to `$DSH_HOME/storages/team-balancer/config.json`.
+2. The override object
+   `{enabled?, autoTeam?, spread?, capabilityRouting?, emphasis?, includeSubagents?, pool?}`
+   is persisted atomically to `$DSH_HOME/storages/team-balancer/config.json`.
 3. The in-memory effective config switches immediately; route/catalog caches are
    invalidated.
 4. Live **idle** children are re-routed through the selection API (the recorded route on
@@ -124,5 +161,6 @@ coexist.
 |---|---|
 | Provider unmounted / model unknown | route skipped, warning logged; child keeps the inherited model if nothing routable |
 | UI save while a teammate runs | running teammate keeps the model; idle/new ones use the new pool |
-| App restart | overrides persist in JSON; assignments rebuild from the durable roster ordinal |
+| App restart / plugin reload | overrides and assignments persist in JSON; live Leads get the policy, live children get their recorded route, dormant ones restore it on resume |
+| Lead never spawns teammates | with `autoTeam` on, the policy section asks it to split independent workstreams; turn it off to return to explicit-only delegation |
 | Child session opened in the Web UI | model selection falls back to the logged `request/header` route, which matches this plugin's route |

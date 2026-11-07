@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
     const ZH = {
       title: '多 AI 均衡调度',
       panelTitle: '均衡调度',
-      subtitle: '团队多 Agent 的队友会按权重轮流分到不同供应商；主 Agent 保持自己的模型。',
+      subtitle: '团队多 Agent 的队友会按权重轮流分到不同供应商；主 Agent 保持自己的模型，并在大任务中主动拆给多个队友。',
       style: '搭配样式',
       styleHint: '先点一个样式快速套用，再按需微调下面的权重；保存后生效。',
       balanced: '均衡轮换',
@@ -42,6 +42,24 @@ window.__ModuleLoader__.load({
       enabledHint: '关闭后所有子 Agent 恢复继承主 Agent 的模型，保存立即生效。',
       includeSubagents: '也调度普通子代理',
       includeSubagentsHint: '打开后 subagent / subagent_fork 创建的子代理也会参与轮换；默认只调度团队成员。',
+      autoTeam: '主 Agent 主动拆给多个队友',
+      autoTeamHint: '打开后，主 Agent 会收到一段组队策略：可拆解的大任务主动创建 2–4 个队友并分工，模型仍由均衡器自动分配；小任务保持单 Agent。关闭则只有你明确要求多 Agent 时才拆。',
+      spread: '优先铺开不同供应商',
+      spreadHint: '打开后第一轮尽量每家供应商各出现一次，再按权重重复：DeepSeek 1 : GLM 2 会先 DeepSeek、GLM，再补 GLM。关闭则严格按权重平滑轮换。',
+      capabilityRouting: '按任务类型匹配模型',
+      capabilityRoutingHint: '打开后，名字以 vision- / image- / ui- 开头的队友优先分到视觉强的模型（GLM），以 code- / table- / data- / api- 开头的优先分到代码/表格强的模型（DeepSeek）；其余仍按权重轮换。',
+      emphasis: '未识别任务时的侧重',
+      emphasisHint: '当队友名字看不出任务类型时使用的后备侧重；auto 表示完全按权重轮换。',
+      emphasisAuto: '自动（按名字判断）',
+      emphasisBalanced: '不侧重（纯轮换）',
+      emphasisCode: '代码 / 表格优先（DeepSeek）',
+      emphasisVision: '图像 / 视觉优先（GLM）',
+      capability: '能力',
+      capabilityVision: '视觉',
+      capabilityCode: '代码',
+      policy: '主 Agent 组队策略',
+      policyInstalled: '已注入当前主 Agent；本回合已渲染 {n} 次。',
+      policyPending: '已启用；等待主 Agent 进入会话后注入（也可刷新后查看）。',
       pool: '模型池（自定义）',
       poolHint: '按权重轮流分配：队友按创建顺序取轮转序列中的下一项。deepseek 2 : glm 1 表示每 3 个队友 2 个 DeepSeek、1 个 GLM。',
       provider: '供应商',
@@ -76,7 +94,7 @@ window.__ModuleLoader__.load({
     const EN = {
       title: 'Team AI Balancer',
       panelTitle: 'AI Balance',
-      subtitle: 'Team teammates rotate across providers by weight; the Lead keeps its own model.',
+      subtitle: 'Team teammates rotate across providers by weight; the Lead keeps its own model and splits big tasks across teammates.',
       style: 'Balancing style',
       styleHint: 'Pick a style to fill the pool, then fine-tune weights below. Save applies it.',
       balanced: 'Even rotation',
@@ -92,6 +110,24 @@ window.__ModuleLoader__.load({
       enabledHint: 'When off, delegated agents inherit the Lead model again. Saving applies immediately.',
       includeSubagents: 'Balance ordinary subagents too',
       includeSubagentsHint: 'Also rotate subagent / subagent_fork children. Off by default so Team sessions stay predictable.',
+      autoTeam: 'Lead splits work across teammates',
+      autoTeamHint: 'When on, the Lead receives a delegation policy: substantial split-friendly requests get 2-4 teammates with disjoint scopes, while models are still assigned by the balancer. Small tasks stay single-agent. When off, the Lead only delegates when you explicitly ask.',
+      spread: 'Spread providers before repeating',
+      spreadHint: 'The first pass gives every provider one slot before weights repeat: DeepSeek 1 : GLM 2 becomes DeepSeek, GLM, then GLM. Off keeps strict smooth weighted rotation.',
+      capabilityRouting: 'Match models to task type',
+      capabilityRoutingHint: 'When on, teammates named vision- / image- / ui- prefer the vision-strong model (GLM), while code- / table- / data- / api- teammates prefer the code/table-strong model (DeepSeek). Everything else still rotates by weight.',
+      emphasis: 'Fallback emphasis',
+      emphasisHint: 'Used when a teammate name does not reveal its discipline; auto means plain weighted rotation.',
+      emphasisAuto: 'Auto (detect from name)',
+      emphasisBalanced: 'No emphasis (plain rotation)',
+      emphasisCode: 'Code / tables first (DeepSeek)',
+      emphasisVision: 'Image / vision first (GLM)',
+      capability: 'Capability',
+      capabilityVision: 'vision',
+      capabilityCode: 'code',
+      policy: 'Lead delegation policy',
+      policyInstalled: 'Injected into the current Lead; rendered {n} times this run.',
+      policyPending: 'Enabled; it will be injected when the Lead enters a session (or refresh).',
       pool: 'Model pool (custom)',
       poolHint: 'Weighted round robin in teammate creation order. deepseek 2 : glm 1 means 2 of every 3 teammates use DeepSeek, 1 uses GLM.',
       provider: 'Provider',
@@ -253,6 +289,26 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /** One label + select row. */
+    function SelectRow(props) {
+      return h(
+        'div',
+        { className: 'tbz-row', style: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' } },
+        h('span', null, props.label),
+        h(
+          'select',
+          {
+            className: 'tbz-select',
+            value: props.value,
+            disabled: props.disabled === true,
+            onChange: (event) => props.onChange(event.target.value),
+            'aria-label': props.label,
+          },
+          props.options.map((option) => h('option', { key: option.value, value: option.value }, option.label)),
+        ),
+      )
+    }
+
     /** The shared balancer editor. */
     function TeamBalancerPage(props) {
       const t = props.t
@@ -280,7 +336,15 @@ window.__ModuleLoader__.load({
             setError(null)
             setState(body)
             if (!dirtyRef.current) {
-              setDraft({ enabled: body.enabled === true, includeSubagents: body.includeSubagents === true, pool: body.pool.map((entry) => ({ ...entry })) })
+              setDraft({
+                enabled: body.enabled === true,
+                includeSubagents: body.includeSubagents === true,
+                autoTeam: body.autoTeam === true,
+                spread: body.spread === true,
+                capabilityRouting: body.capabilityRouting === true,
+                emphasis: body.emphasis ?? 'auto',
+                pool: body.pool.map((entry) => ({ ...entry })),
+              })
               setDirty(false)
             }
           } catch (cause) {
@@ -346,7 +410,15 @@ window.__ModuleLoader__.load({
 
       function adopter(reply) {
         setState(reply)
-        setDraft({ enabled: reply.enabled === true, includeSubagents: reply.includeSubagents === true, pool: reply.pool.map((entry) => ({ ...entry })) })
+        setDraft({
+          enabled: reply.enabled === true,
+          includeSubagents: reply.includeSubagents === true,
+          autoTeam: reply.autoTeam === true,
+          spread: reply.spread === true,
+          capabilityRouting: reply.capabilityRouting === true,
+          emphasis: reply.emphasis ?? 'auto',
+          pool: reply.pool.map((entry) => ({ ...entry })),
+        })
         setDirty(false)
       }
 
@@ -362,6 +434,10 @@ window.__ModuleLoader__.load({
           const reply = await postJson('/dsh-team-balancer/config', {
             enabled: draft.enabled,
             includeSubagents: draft.includeSubagents,
+            autoTeam: draft.autoTeam,
+            spread: draft.spread,
+            capabilityRouting: draft.capabilityRouting,
+            emphasis: draft.emphasis,
             pool: draft.pool.map((entry) => ({
               provider: String(entry.provider ?? '').trim(),
               model: String(entry.model ?? '').trim(),
@@ -465,6 +541,13 @@ window.__ModuleLoader__.load({
           ),
         )
 
+        const guidanceState = state && state.guidance ? state.guidance : null
+        const policyLine =
+          t('policy') +
+          ' · ' +
+          (guidanceState !== null && guidanceState.installed > 0
+            ? t('policyInstalled').replace('{n}', String(guidanceState.renders ?? 0))
+            : t('policyPending'))
         children.push(
           h(
             'div',
@@ -474,6 +557,38 @@ window.__ModuleLoader__.load({
               null,
               h(ToggleRow, { label: t('enabled'), checked: draft.enabled, onChange: (value) => edit({ ...draft, enabled: value }) }),
               h('p', { className: 'tbz-hint', style: { marginTop: '4px' } }, t('enabledHint')),
+            ),
+            h(
+              'div',
+              null,
+              h(ToggleRow, { label: t('autoTeam'), checked: draft.autoTeam, onChange: (value) => edit({ ...draft, autoTeam: value }) }),
+              h('p', { className: 'tbz-hint', style: { marginTop: '4px' } }, t('autoTeamHint')),
+              h('p', { className: 'tbz-hint', style: { marginTop: '4px' } }, policyLine),
+            ),
+            h(
+              'div',
+              null,
+              h(ToggleRow, { label: t('capabilityRouting'), checked: draft.capabilityRouting === true, onChange: (value) => edit({ ...draft, capabilityRouting: value }) }),
+              h('p', { className: 'tbz-hint', style: { marginTop: '4px' } }, t('capabilityRoutingHint')),
+              h(SelectRow, {
+                label: t('emphasis'),
+                value: draft.emphasis ?? 'auto',
+                disabled: draft.capabilityRouting !== true,
+                onChange: (value) => edit({ ...draft, emphasis: value }),
+                options: [
+                  { value: 'auto', label: t('emphasisAuto') },
+                  { value: 'balanced', label: t('emphasisBalanced') },
+                  { value: 'code', label: t('emphasisCode') },
+                  { value: 'vision', label: t('emphasisVision') },
+                ],
+              }),
+              h('p', { className: 'tbz-hint', style: { marginTop: '4px' } }, t('emphasisHint')),
+            ),
+            h(
+              'div',
+              null,
+              h(ToggleRow, { label: t('spread'), checked: draft.spread, onChange: (value) => edit({ ...draft, spread: value }) }),
+              h('p', { className: 'tbz-hint', style: { marginTop: '4px' } }, t('spreadHint')),
             ),
             h(
               'div',
@@ -593,6 +708,7 @@ window.__ModuleLoader__.load({
             { key: record.agentId },
             h('td', null, record.teammateName ?? String(record.agentId).slice(0, 8)),
             h('td', null, record.kind === 'teammate' ? t('kindTeammate') : t('kindSubagent')),
+            h('td', { className: 'tbz-muted' }, record.capability === undefined ? '—' : t(record.capability === 'vision' ? 'capabilityVision' : 'capabilityCode')),
             h('td', { className: 'tbz-mono' }, `${record.provider}/${record.model}`),
             h('td', { className: 'tbz-muted' }, String(record.ordinal ?? '')),
           ),
@@ -608,7 +724,7 @@ window.__ModuleLoader__.load({
               : h(
                   'table',
                   { className: 'tbz-table' },
-                  h('thead', null, h('tr', null, h('th', null, t('assignments')), h('th', null, t('kind')), h('th', null, t('model')), h('th', null, t('ordinal')))),
+                  h('thead', null, h('tr', null, h('th', null, t('assignments')), h('th', null, t('kind')), h('th', null, t('capability')), h('th', null, t('model')), h('th', null, t('ordinal')))),
                   h('tbody', null, ...rows),
                 ),
           ),

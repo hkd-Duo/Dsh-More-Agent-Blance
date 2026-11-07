@@ -9,9 +9,10 @@
 
 > **Weighted multi-AI balancing for DeepSeek Harness Agent Teams.**
 > Teammates and delegated subagents rotate across DeepSeek, GLM (and any other mounted
-> provider) by weight, while the Lead keeps its own model. Everything — balancing
-> style presets, the weighted model pool, and live route assignments — is edited from
-> a first-class panel in the Web sidebar.
+> provider) by weight, while the Lead keeps its own model. The Lead also receives a
+> delegation policy that turns substantial tasks into 2-4 parallel teammates instead of
+> one serial context. Everything — balancing style presets, the weighted model pool, and
+> live route assignments — is edited from a first-class panel in the Web sidebar.
 
 - Package: `dsh-plugin-team-balancer`
 - Loader row: `team-balancer`
@@ -32,6 +33,19 @@ Lead untouched.
 
 ## Features
 
+- **Lead delegation policy** — root Agents get a short system-prompt section telling
+  them to split requests with two or more independent workstreams across 2-4
+  `spawn_teammate` calls with disjoint write scopes, and to leave model choice to the
+  balancer. Small or tightly coupled tasks stay single-agent. Can be turned off.
+- **Spread before repeat** — the first rotation gives every configured provider one slot,
+  so the first two teammates already run on different models even with a 2:1 weight.
+- **Capability-aware routing** — a teammate named `vision-*`, `image-*` or `ui-*`
+  prefers the vision-capable route (GLM by default); `code-*`, `table-*`, `data-*` or
+  `api-*` prefers the code/table route (DeepSeek). For unrecognized names an
+  `emphasis` option picks the fallback: auto, balanced, code-first or vision-first.
+- **Durable assignments** — routes are stored in `assignments.json` and re-applied when a
+  restart or plugin reload adopts live Agents; dormant teammates resume on the same
+  route.
 - **Sidebar panel** — a balance icon in the left rail opens the full editor; no
   backend YAML editing.
 - **Balancing styles** — one click applies: even rotation (1:1), DeepSeek-first (2:1),
@@ -87,10 +101,15 @@ separate bundle is needed.
 
 1. Click the **balance icon** in the left sidebar (after the built-in panels).
 2. Pick a **balancing style**, or edit the pool: provider, model, weight, add/remove.
-3. Toggle *Enable balancing* and *Balance ordinary subagents too* if needed.
+3. Toggle *Enable balancing*, *Lead splits work across teammates*, *Spread providers
+   before repeating*, *Match models to task type*, and *Balance ordinary subagents too*
+   as needed. With capability routing on, pick the fallback *emphasis* for unrecognized
+   names (auto, balanced, code-first or vision-first).
 4. Press **Save and apply**.
-5. Ask the Lead to create teammates as usual; the *Current assignments* table shows
-   which provider each one runs on.
+5. Ask the Lead to do a task with independent parts; with the delegation policy on it
+   creates several teammates, and the *Current assignments* table shows which provider
+   each one runs on. For image/visual work have the Lead name the teammate `vision-*`;
+   for code or tables use `code-*` / `table-*` and the balancer matches the model.
 
 The Lead and the user's own chats are never rerouted.
 
@@ -106,6 +125,10 @@ $DSH_HOME/storages/team-balancer/config.json
 | Field | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Master switch. When off, delegated children inherit the Lead model. |
+| `autoTeam` | `true` | Add the Lead delegation policy that splits substantial tasks across 2-4 teammates. |
+| `spread` | `true` | First rotation gives every pool route one slot before weights repeat. |
+| `capabilityRouting` | `true` | Route vision/UI teammates to GLM and code/table teammates to DeepSeek by name. |
+| `emphasis` | `auto` | Fallback when a name reveals nothing: `auto`, `balanced`, `code`, `vision`. |
 | `includeSubagents` | `false` | Also balance ordinary `subagent` / `subagent_fork` children. |
 | `pool[].provider` | — | LLM provider route id, e.g. `deepseek-official`, `zai`. |
 | `pool[].model` | — | Model id under that provider. |
@@ -113,15 +136,16 @@ $DSH_HOME/storages/team-balancer/config.json
 | `pool[].reasoningEffort` | unset | Optional fixed effort for the route; when unset, switching providers clears the inherited effort. |
 
 Assignment rule: teammate ordinal `N` (creation order in the durable Team roster)
-receives `cycle[N % cycleLength]`, where `cycle` is generated from the weights with
-smooth weighted round robin. Example `deepseek 2 : glm 1` → `[deepseek, glm, deepseek]`.
+receives `cycle[N % cycleLength]`. With `spread`, the cycle contains every route once
+first, then fills the remaining weight slots: `deepseek 1 : glm 2` → `[deepseek, glm, glm]`.
+With `spread` off it is plain smooth weighted round robin: `[glm, glm, deepseek]`.
 
 Host HTTP routes (loopback + same-origin only):
 
 | Route | Method | Purpose |
 |---|---|---|
 | `/dsh-team-balancer/state` | GET | effective config, providers/models, route availability, live assignments |
-| `/dsh-team-balancer/config` | POST | validate, persist and live-apply `{enabled, includeSubagents, pool}` |
+| `/dsh-team-balancer/config` | POST | validate, persist and live-apply `{enabled, autoTeam, spread, capabilityRouting, emphasis, includeSubagents, pool}` |
 | `/dsh-team-balancer/reset` | POST | drop stored overrides, back to bundle defaults |
 
 ## How it works
@@ -133,8 +157,13 @@ See [docs/how-it-works.md](docs/how-it-works.md) for the full data flow. In shor
    loop freezes the step model before prompt assembly there).
 2. On DSH 0.2.2+ routing lives entirely in that selection; on older cores a Host-level
    `agent/request` waterfall listener applies the same route as a fallback.
-3. Root Sessions are skipped; the pool is validated with `ctx.llm.resolveModelInfo`
-   (60 s cache) and recomputed when adapters change.
+3. On mount the plugin adopts live Agents (`agents.list()`): root Agents receive the
+   delegation policy section through their own `systemPrompt` scope, and children that
+   entered before the plugin loaded get their persisted route back.
+4. Assignments are written to `$DSH_HOME/storages/team-balancer/assignments.json`, so a
+   host restart or plugin reload does not lose the distribution.
+5. Root Sessions are never rerouted; the pool is validated with
+   `ctx.llm.resolveModelInfo` (60 s cache) and recomputed when adapters change.
 
 ## Development
 
@@ -148,7 +177,8 @@ npm test        # fake-Cordis host test + fake-module-loader client test
 Both test files run with plain Node (>= 20) and no dependencies:
 
 - `tools/host-test.mjs` — mounts the real Host half on a fake context, then verifies
-  assignment, request rewriting, HTTP save/reset/validation and persistence.
+  route assignment, request rewriting, Lead guidance section rendering, spread-first
+  cycles, HTTP save/reset/validation and assignment persistence.
 - `tools/client-test.mjs` — executes the real client bundle with a fake module loader,
   React stub and fake context, then verifies all three slot registrations.
 

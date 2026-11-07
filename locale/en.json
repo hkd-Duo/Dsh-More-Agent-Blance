@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Team AI Balancer",
-    "description": "Distribute Agent Teams teammates and delegated subagents across a weighted pool of LLM providers (DeepSeek, GLM, others), while the Lead keeps its own model. Edited from the Plugins page."
+    "description": "Rotate Agent Teams teammates (and optional subagents) across a weighted pool of LLM providers (DeepSeek, GLM, others), route image/visual work to GLM and code/table work to DeepSeek, and prompt the Lead to split substantial tasks across 2-4 teammates. Assignments persist across restarts while the Lead keeps its own model. Edited from the Plugins page."
   }
 }

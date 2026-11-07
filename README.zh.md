@@ -9,8 +9,8 @@
 
 > **为 DeepSeek Harness 的团队多 Agent 做「多 AI 均衡调度」。**
 > 队友（以及可选的普通子代理）按权重轮流分配给 DeepSeek、GLM 等已挂载的供应商，
-> 主 Agent（Lead）保持自己的模型；搭配样式、权重池、当前分配全部在左侧边栏面板里
-> 可视化编辑。
+> 主 Agent（Lead）保持自己的模型；同时主 Agent 会收到一段组队策略，把可拆解的大任务
+> 主动分给 2–4 个队友并行干。搭配样式、权重池、当前分配全部在左侧边栏面板里可视化编辑。
 
 - 包名：`dsh-plugin-team-balancer`
 - 插件行：`team-balancer`
@@ -29,6 +29,17 @@ GLM 的 profile 里，整支队伍仍然只跑一家：一份账单、一个限�
 
 ## 功能
 
+- **主 Agent 组队策略**：根 Agent 会收到一段系统提示，要求把有两个以上独立工作流的
+  请求拆给 2–4 个 `spawn_teammate` 队友、各给不重叠的写入范围，模型选择交给均衡器；
+  小任务或强耦合任务保持单 Agent。可在面板里关闭。
+- **先铺开再重复**：第一轮让每个已配置供应商各出现一次，所以即使权重是 2:1，前两个
+  队友也已经跑在不同模型上。
+- **按任务能力强项匹配模型**：名字以 `vision-` / `image-` / `ui-` 开头的队友优先分到
+  视觉能力强的路由（默认 GLM），以 `code-` / `table-` / `data-` / `api-` 开头的优先分到
+  代码/表格能力强的路由（默认 DeepSeek）；名字看不出类型时可按「侧重」选项选
+  自动、不侧重、代码/表格优先或图像/视觉优先。
+- **分配持久化**：路由写入 `assignments.json`，Host 重启或插件重载时会重新应用到
+  存活 Agent；休眠中的队友恢复会话后仍是原路由。
 - **左侧边栏面板**：点天平图标打开完整编辑器，无需改后台 YAML。
 - **搭配样式一键套用**：均衡轮换 1:1、DeepSeek 优先 2:1、GLM 优先 1:2、
   仅 DeepSeek、仅 GLM；套用后还能继续微调权重。
@@ -76,9 +87,13 @@ dsh plugin --profile <profile> add link:/绝对路径/Dsh-More-Agent-Blance
 
 1. 点左侧边栏的**天平图标**（在内置面板之后）。
 2. 选一个**搭配样式**，或直接编辑模型池：供应商 / 模型 / 权重、增删行。
-3. 按需打开「启用均衡调度」「也调度普通子代理」。
+3. 按需打开「启用均衡调度」「主 Agent 主动拆给多个队友」「优先铺开不同供应商」
+   「按任务类型匹配模型」「也调度普通子代理」；按任务类型匹配打开时，再选择
+   未识别名字的「侧重」（自动 / 不侧重 / 代码表格优先 / 图像视觉优先）。
 4. 点 **保存并生效**。
-5. 照常让主 Agent 创建队友；「当前分配」表会显示每个队友实际跑在哪。
+5. 交给主 Agent 一个有多个独立部分的任务；开着组队策略时它会创建多个队友，
+   「当前分配」表会显示每个队友实际跑在哪。需要图像/视觉工作时让主 Agent 用
+   `vision-*` 命名队友，代码/表格工作用 `code-*` / `table-*` 命名，均衡器会自动匹配。
 
 主 Agent 和用户自己的普通会话永远不会被改路由。
 
@@ -93,22 +108,27 @@ $DSH_HOME/storages/team-balancer/config.json
 | 字段 | 默认 | 含义 |
 |---|---|---|
 | `enabled` | `true` | 总开关；关闭后子 Agent 恢复继承主模型 |
+| `autoTeam` | `true` | 给主 Agent 注入组队策略，把可拆解的大任务分给 2–4 个队友 |
+| `spread` | `true` | 第一轮先让每个供应商各出现一次，再按权重重复 |
+| `capabilityRouting` | `true` | 按队友名字/侧重把视觉任务分给 GLM、代码表格任务分给 DeepSeek |
+| `emphasis` | `auto` | 名字看不出任务类型时的后备侧重：`auto`、`balanced`、`code`、`vision` |
 | `includeSubagents` | `false` | 是否也调度普通 `subagent` / `subagent_fork` |
 | `pool[].provider` | — | LLM provider 路由 id，如 `deepseek-official`、`zai` |
 | `pool[].model` | — | 该 provider 下的模型 id |
 | `pool[].weight` | `1` | 1–100 的整数，参与平滑加权轮转 |
 | `pool[].reasoningEffort` | 不设置 | 该路由固定思考档位；不设置时切换供应商会清掉继承的 effort |
 
-分配规则：队友序号 `N`（durable roster 创建顺序）取
-`cycle[N % cycleLength]`，`cycle` 由权重经平滑加权轮转生成。例如
-`deepseek 2 : glm 1` → `[deepseek, glm, deepseek]`。
+分配规则：队友序号 `N`（durable roster 创建顺序）取 `cycle[N % cycleLength]`。
+开启 `spread` 时，cycle 先让每条路由各出现一次，再填剩余权重位：
+`deepseek 1 : glm 2` → `[deepseek, glm, glm]`；关闭时是纯平滑加权轮转：
+`[glm, glm, deepseek]`。
 
 Host HTTP 路由（仅本机同源可访问）：
 
 | 路由 | 方法 | 用途 |
 |---|---|---|
 | `/dsh-team-balancer/state` | GET | 生效配置、可用供应商/模型、路由可用性、当前分配 |
-| `/dsh-team-balancer/config` | POST | 校验、持久化并热应用 `{enabled, includeSubagents, pool}` |
+| `/dsh-team-balancer/config` | POST | 校验、持久化并热应用 `{enabled, autoTeam, spread, capabilityRouting, emphasis, includeSubagents, pool}` |
 | `/dsh-team-balancer/reset` | POST | 删除覆盖项，回到 bundle 默认值 |
 
 ## 实现
@@ -119,7 +139,11 @@ Host HTTP 路由（仅本机同源可访问）：
    DSH 0.2.2+ 上通过 `agent.model.select()` 在步前准备阶段固定本步模型。
 2. DSH 0.2.2+ 的路由完全由该选择承担；旧内核上仍由 Host 级 `agent/request`
    瀑布监听作为回退来应用同一条路由。
-3. 根 Session 跳过；路由用 `ctx.llm.resolveModelInfo` 校验（60 秒缓存），
+3. 插件挂载时用 `agents.list()` 收养存活 Agent：根 Agent 通过自己的 `systemPrompt`
+   scope 注入组队策略，先于插件进入的子 Agent 取回持久化路由。
+4. 分配写入 `$DSH_HOME/storages/team-balancer/assignments.json`，Host 重启或插件
+   重载不会丢失分布。
+5. 根 Session 不参与轮转；路由用 `ctx.llm.resolveModelInfo` 校验（60 秒缓存），
    `llm/adapters-updated` 时失效重算。
 
 ## 开发
@@ -134,7 +158,7 @@ npm test        # 假 Cordis 的 Host 测试 + 假 ModuleLoader 的 Client 测�
 两个测试都能用纯 Node（>= 20）直接跑，无依赖：
 
 - `tools/host-test.mjs`：把真实 Host 半挂到假上下文上，验证分配、请求改写、
-  HTTP 保存/重置/校验与持久化。
+  主 Agent 策略注入、spread-first 轮转、HTTP 保存/重置/校验与分配持久化。
 - `tools/client-test.mjs`：用假模块加载器、React 桩和假上下文执行真实 client 包，
   验证三个界面注册点。
 

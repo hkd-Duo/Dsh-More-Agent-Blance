@@ -9,8 +9,21 @@
       name: 'dsh-plugin-team-balancer'
       config:
         enabled: true
+        # Give the Lead a delegation policy: split work with two or more
+        # independent workstreams across 2-4 teammates instead of serializing it.
+        autoTeam: true
+        # First pass gives every pool route one slot before weights repeat, so
+        # the first two teammates already run on different providers.
+        spread: true
         # Also balance ordinary `subagent` / `subagent_fork` children.
         includeSubagents: false
+        # Match a teammate to a model that fits its discipline. A teammate named
+        # vision-*/image-*/ui-* prefers a vision-capable route (GLM), while
+        # code-*/table-*/data-*/api-* prefers a code/table route (DeepSeek).
+        capabilityRouting: true
+        # Fallback when the name reveals nothing: auto (plain rotation),
+        # balanced, code (prefer DeepSeek) or vision (prefer GLM).
+        emphasis: auto
         # Weighted pool edited from the Web page. weight is a positive integer;
         # a route that is not currently routable is skipped at runtime.
         pool:

@@ -10,14 +10,23 @@
  * Routes:
  *   GET  /dsh-team-balancer/state   -> effective config, routable providers,
  *                                      validated pool, live assignments
- *   POST /dsh-team-balancer/config  -> save {enabled, includeSubagents, pool}
+ *   POST /dsh-team-balancer/config  -> save {enabled, includeSubagents,
+ *                                      autoTeam, spread, pool}
  *   POST /dsh-team-balancer/reset   -> drop stored overrides, back to bundle defaults
  *
- * Routing mechanism: `agent/created` assigns every child Agent a sticky route
- * from the weighted pool; one Host `agent/request` listener forces that route
- * on each model request of that child, and the child's AgentOptions are updated
- * so the Team roster, session selector, and {{model}} persona report it. Root
- * Sessions (the Lead and the user's own chats) are never rerouted.
+ * Routing mechanism: every child Agent gets a sticky route from the weighted
+ * pool. On DeepSeek Harness 0.2.2+ the route is fixed before the step through
+ * `agent.model.select()`; on older cores it is forced by the `agent/request`
+ * waterfall. The child's AgentOptions are updated so the Team roster, session
+ * selector, and {{model}} persona report it. Assignments persist under
+ * <DSH_HOME>/storages/team-balancer/assignments.json, so a restart or a plugin
+ * reload restores each teammate's model instead of leaving it on the Lead's.
+ *
+ * Automatic participation: with `autoTeam` on, the plugin also installs a
+ * per-agent system-prompt section on root (Lead) Agents that tells the model to
+ * split substantial work across 2-4 teammates instead of doing everything in
+ * one context. The section is scoped to each root Agent via `agent.ctx`, so
+ * teammates never receive it. Root Sessions are never rerouted.
  */
 
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -33,12 +42,115 @@ const STORE_DIR = 'team-balancer'
 const BODY_LIMIT = 64 * 1024
 const CATALOG_TTL_MS = 60 * 1000
 const ROUTE_TTL_MS = 60 * 1000
+const CONFIG_FILE = 'config.json'
+const ASSIGNMENTS_FILE = 'assignments.json'
+/** Version reported by /state; bump together with package.json. */
+const VERSION = '0.3.0'
 
 /** Bundle-patch defaults used until the user saves overrides. */
 const DEFAULT_POOL = [
   { provider: 'deepseek-official', model: 'deepseek-flash', weight: 1 },
   { provider: 'zai', model: 'glm-5.3-flash', weight: 1 },
 ]
+
+/** Default for the Lead-participation system-prompt section. */
+const DEFAULT_AUTO_TEAM = true
+/** Default for spreading distinct providers before repeating one. */
+const DEFAULT_SPREAD = true
+/** Prompt section name; unique so it never shadows a core section. */
+const GUIDANCE_SECTION = 'team-balancer:policy'
+
+/** Default capability emphasis: follow the task hint, otherwise rotate evenly. */
+const DEFAULT_CAPABILITY_ROUTING = true
+const DEFAULT_EMPHASIS = 'auto'
+const EMPHASIS_MODES = new Set(['auto', 'balanced', 'code', 'vision'])
+
+/**
+ * Capability vocabulary. A teammate's name prefix (`vision-*`, `code-*`,
+ * `table-*`, ...) or the configured emphasis selects one of these buckets; each
+ * pool route advertises the buckets it is good at.
+ */
+const CAPABILITY_KEYWORDS = {
+  vision: [
+    'vision',
+    'image',
+    'images',
+    'img',
+    'visual',
+    'screenshot',
+    'ocr',
+    'multimodal',
+    'ui',
+    'ux',
+    'frontend',
+    'design',
+    'css',
+    'html',
+    '图像',
+    '图片',
+    '视觉',
+    '截图',
+    '界面',
+    '前端',
+    '设计',
+    '多模态',
+  ],
+  code: [
+    'code',
+    'coding',
+    'table',
+    'tables',
+    'tabular',
+    'data',
+    'dataset',
+    'sql',
+    'api',
+    'backend',
+    'server',
+    'refactor',
+    'test',
+    'tests',
+    'debug',
+    'typescript',
+    'javascript',
+    'python',
+    'script',
+    'algorithm',
+    'logic',
+    '代码',
+    '表格',
+    '数据',
+    '重构',
+    '调试',
+    '测试',
+    '算法',
+    '后端',
+  ],
+}
+
+/** Name prefixes that force one capability bucket. */
+const NAME_CAPABILITY = new Map([
+  ['vision', 'vision'],
+  ['image', 'vision'],
+  ['img', 'vision'],
+  ['visual', 'vision'],
+  ['ui', 'vision'],
+  ['frontend', 'vision'],
+  ['design', 'vision'],
+  ['ocr', 'vision'],
+  ['code', 'code'],
+  ['coding', 'code'],
+  ['table', 'code'],
+  ['tables', 'code'],
+  ['data', 'code'],
+  ['sql', 'code'],
+  ['api', 'code'],
+  ['backend', 'code'],
+  ['refactor', 'code'],
+  ['test', 'code'],
+  ['debug', 'code'],
+  ['script', 'code'],
+])
 
 /** @returns {number} whole milliseconds on a monotonic-enough clock. */
 function now() {
@@ -102,6 +214,14 @@ function normalizeConfig(raw, options = {}) {
   if (options.partial !== true && config.enabled === undefined) config.enabled = true
   if (source.includeSubagents !== undefined) config.includeSubagents = source.includeSubagents === true
   if (options.partial !== true && config.includeSubagents === undefined) config.includeSubagents = false
+  if (source.autoTeam !== undefined) config.autoTeam = source.autoTeam === true
+  if (options.partial !== true && config.autoTeam === undefined) config.autoTeam = DEFAULT_AUTO_TEAM
+  if (source.spread !== undefined) config.spread = source.spread === true
+  if (options.partial !== true && config.spread === undefined) config.spread = DEFAULT_SPREAD
+  if (source.capabilityRouting !== undefined) config.capabilityRouting = source.capabilityRouting === true
+  if (options.partial !== true && config.capabilityRouting === undefined) config.capabilityRouting = DEFAULT_CAPABILITY_ROUTING
+  if (source.emphasis !== undefined && EMPHASIS_MODES.has(source.emphasis)) config.emphasis = source.emphasis
+  if (options.partial !== true && config.emphasis === undefined) config.emphasis = DEFAULT_EMPHASIS
   if (Array.isArray(source.pool)) config.pool = dedupePool(source.pool)
   else if (options.partial !== true) config.pool = dedupePool(DEFAULT_POOL)
   if (config.pool !== undefined && config.pool.length === 0 && options.partial !== true) config.pool = dedupePool(DEFAULT_POOL)
@@ -111,7 +231,7 @@ function normalizeConfig(raw, options = {}) {
 /**
  * Validate an incoming config patch from the Web page.
  * @param {unknown} body parsed JSON body.
- * @returns {{enabled?: boolean, includeSubagents?: boolean, pool?: object[]}}
+ * @returns {{enabled?: boolean, includeSubagents?: boolean, autoTeam?: boolean, spread?: boolean, pool?: object[]}}
  */
 function validatePatch(body) {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new Error('请求体必须是对象')
@@ -123,6 +243,22 @@ function validatePatch(body) {
   if ('includeSubagents' in body) {
     if (typeof body.includeSubagents !== 'boolean') throw new Error('includeSubagents 必须是布尔值')
     patch.includeSubagents = body.includeSubagents
+  }
+  if ('autoTeam' in body) {
+    if (typeof body.autoTeam !== 'boolean') throw new Error('autoTeam 必须是布尔值')
+    patch.autoTeam = body.autoTeam
+  }
+  if ('spread' in body) {
+    if (typeof body.spread !== 'boolean') throw new Error('spread 必须是布尔值')
+    patch.spread = body.spread
+  }
+  if ('capabilityRouting' in body) {
+    if (typeof body.capabilityRouting !== 'boolean') throw new Error('capabilityRouting 必须是布尔值')
+    patch.capabilityRouting = body.capabilityRouting
+  }
+  if ('emphasis' in body) {
+    if (typeof body.emphasis !== 'string' || !EMPHASIS_MODES.has(body.emphasis)) throw new Error('emphasis 必须是 auto / balanced / code / vision')
+    patch.emphasis = body.emphasis
   }
   if ('pool' in body) {
     if (!Array.isArray(body.pool)) throw new Error('pool 必须是数组')
@@ -151,22 +287,55 @@ function validatePatch(body) {
 }
 
 /**
- * Build the smooth weighted round-robin pick sequence for a pool.
+ * Build the weighted pick sequence for a pool.
+ *
+ * With `spread`, the first pass contains every distinct route once, in pool
+ * order; only then are the remaining weight slots filled by smooth weighted
+ * round robin. A 1:1 pool yields [DeepSeek, GLM], and a 1:2 pool yields
+ * [DeepSeek, GLM, GLM] instead of [GLM, GLM, DeepSeek] — so the very first two
+ * teammates already run on different providers. Without `spread`, plain smooth
+ * weighted round robin is used.
  * @param {Array<{weight: number}>} pool
+ * @param {boolean} spread
  * @returns {number[]} pool indexes covering exactly one total-weight cycle.
  */
-function weightedCycle(pool) {
+function weightedCycle(pool, spread) {
   const total = pool.reduce((sum, entry) => sum + entry.weight, 0)
-  const current = pool.map(() => 0)
-  const cycle = []
-  for (let step = 0; step < total; step += 1) {
-    let best = 0
-    for (let index = 0; index < pool.length; index += 1) {
-      current[index] += pool[index].weight
-      if (current[index] > current[best]) best = index
+  if (spread !== true) {
+    const current = pool.map(() => 0)
+    const cycle = []
+    for (let step = 0; step < total; step += 1) {
+      let best = 0
+      for (let index = 0; index < pool.length; index += 1) {
+        current[index] += pool[index].weight
+        if (current[index] > current[best]) best = index
+      }
+      cycle.push(best)
+      current[best] -= total
     }
+    return cycle
+  }
+  const remaining = pool.map((entry) => entry.weight)
+  const cycle = []
+  // One distinct route of every provider first, in configured order.
+  for (let index = 0; index < pool.length && cycle.length < total; index += 1) {
+    if (remaining[index] <= 0) continue
+    cycle.push(index)
+    remaining[index] -= 1
+  }
+  // Fill the rest with smooth weighted round robin over the remaining counts.
+  const remainder = remaining.reduce((sum, weight) => sum + weight, 0)
+  const current = pool.map(() => 0)
+  for (let step = cycle.length; step < total; step += 1) {
+    let best = -1
+    for (let index = 0; index < pool.length; index += 1) {
+      if (remaining[index] <= 0) continue
+      current[index] += remaining[index]
+      if (best < 0 || current[index] > current[best]) best = index
+    }
+    if (best < 0) break
     cycle.push(best)
-    current[best] -= total
+    current[best] -= remainder
   }
   return cycle
 }
@@ -195,6 +364,46 @@ function parentSessionOf(agent) {
   }
 }
 
+/** Match one keyword as a whole ASCII word, or as a plain substring for CJK. */
+function containsWord(text, word) {
+  if (/^[a-z0-9]+$/.test(word)) {
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(text)
+  }
+  return text.includes(word)
+}
+
+/** Capability buckets a route advertises, inferred from its provider/model. */
+function capabilityTagsFor(route) {
+  const text = `${route.provider} ${route.model}`.toLowerCase()
+  const tags = []
+  if (text.includes('glm') || text.includes('zai')) tags.push('vision')
+  if (text.includes('deepseek')) tags.push('code')
+  return tags
+}
+
+/** Classify free text into one capability bucket; vision wins when both match. */
+function classifyCapability(text) {
+  if (typeof text !== 'string' || text.trim() === '') return undefined
+  const lower = text.toLowerCase()
+  for (const capability of ['vision', 'code']) {
+    const words = CAPABILITY_KEYWORDS[capability]
+    if (words.some((word) => containsWord(lower, word))) return capability
+  }
+  return undefined
+}
+
+/** Infer a capability from a teammate name such as `vision-ocr` or `code-api`. */
+function capabilityFromName(name) {
+  if (typeof name !== 'string' || name.trim() === '') return undefined
+  const lower = name.trim().toLowerCase()
+  for (const token of lower.split(/[^a-z0-9]+/)) {
+    const mapped = NAME_CAPABILITY.get(token)
+    if (mapped !== undefined) return mapped
+  }
+  return classifyCapability(lower)
+}
+
 /** Resolve the DSH home directory the host process runs with. */
 function resolveDshHome() {
   const env = process.env.DSH_HOME
@@ -213,10 +422,15 @@ function resolveDshHome() {
 export function apply(ctx, rawConfig) {
   const logger = ctx.logger
   const baseConfig = normalizeConfig(rawConfig)
-  const storePath = join(resolveDshHome(), 'storages', STORE_DIR, 'config.json')
+  const storePath = join(resolveDshHome(), 'storages', STORE_DIR, CONFIG_FILE)
+  const assignmentsPath = join(resolveDshHome(), 'storages', STORE_DIR, ASSIGNMENTS_FILE)
 
   /** @type {Map<string, object>} agent id -> sticky route record */
   const assignments = new Map()
+  /** @type {Map<object, {dispose: () => Promise<unknown>}>} Lead agent -> prompt fiber */
+  const guidanceFibers = new Map()
+  let guidanceRenders = 0
+  let guidanceLastRenderedAt
   /** @type {object | undefined} validated route cache for the current pool */
   let routeCache
   /** @type {{at: number, value?: Array<object>} | undefined} provider catalog cache */
@@ -227,12 +441,18 @@ export function apply(ctx, rawConfig) {
   let disposed = false
   let stored = readStored()
   let effective = mergeConfig(baseConfig, stored)
+  for (const record of readAssignments()) assignments.set(record.agentId, record)
+  subagentCursor = [...assignments.values()].filter((record) => record.kind === 'subagent').length
 
   /** Merge base config with stored partial overrides. */
   function mergeConfig(base, overrides) {
     return {
       enabled: overrides.enabled === undefined ? base.enabled : overrides.enabled,
       includeSubagents: overrides.includeSubagents === undefined ? base.includeSubagents : overrides.includeSubagents,
+      autoTeam: overrides.autoTeam === undefined ? base.autoTeam : overrides.autoTeam,
+      spread: overrides.spread === undefined ? base.spread : overrides.spread,
+      capabilityRouting: overrides.capabilityRouting === undefined ? base.capabilityRouting : overrides.capabilityRouting,
+      emphasis: overrides.emphasis === undefined ? base.emphasis : overrides.emphasis,
       pool: overrides.pool === undefined ? base.pool : overrides.pool,
     }
   }
@@ -265,6 +485,60 @@ export function apply(ctx, rawConfig) {
       rmSync(storePath, { force: true })
     } catch (error) {
       logger.warn(`team-balancer: failed to remove ${storePath}: ${describeError(error)}`)
+    }
+  }
+
+  /** Validate one persisted assignment record. */
+  function normalizeAssignment(raw) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
+    const agentId = stringField(raw.agentId)
+    const provider = stringField(raw.provider)
+    const model = stringField(raw.model)
+    const ordinal = typeof raw.ordinal === 'number' && Number.isInteger(raw.ordinal) && raw.ordinal >= 0 ? raw.ordinal : undefined
+    if (agentId === undefined || provider === undefined || model === undefined || ordinal === undefined) return undefined
+    const kind = raw.kind === 'subagent' ? 'subagent' : 'teammate'
+    const record = {
+      agentId,
+      kind,
+      ordinal,
+      provider,
+      model,
+      assignedAt: typeof raw.assignedAt === 'number' ? raw.assignedAt : now(),
+    }
+    const name = stringField(raw.teammateName)
+    if (name !== undefined) record.teammateName = name
+    const effort = stringField(raw.reasoningEffort)
+    if (effort !== undefined) record.reasoningEffort = effort
+    return record
+  }
+
+  /** Read saved assignments so a restart restores each teammate's model. */
+  function readAssignments() {
+    try {
+      const parsed = JSON.parse(readFileSync(assignmentsPath, 'utf8'))
+      if (!Array.isArray(parsed)) return []
+      const records = []
+      for (const raw of parsed) {
+        const record = normalizeAssignment(raw)
+        if (record !== undefined) records.push(record)
+      }
+      return records
+    } catch (error) {
+      if (error !== null && typeof error === 'object' && error.code === 'ENOENT') return []
+      logger.warn(`team-balancer: ignored unreadable assignments file ${assignmentsPath}: ${describeError(error)}`)
+      return []
+    }
+  }
+
+  /** Persist the current assignment table; failures never break a turn. */
+  function writeAssignments() {
+    try {
+      mkdirSync(dirname(assignmentsPath), { recursive: true })
+      const temporary = `${assignmentsPath}.${process.pid}.tmp`
+      writeFileSync(temporary, `${JSON.stringify([...assignments.values()], null, 2)}\n`, 'utf8')
+      renameSync(temporary, assignmentsPath)
+    } catch (error) {
+      logger.warn(`team-balancer: failed to persist assignments: ${describeError(error)}`)
     }
   }
 
@@ -339,9 +613,9 @@ export function apply(ctx, rawConfig) {
   /** Cached weighted cycle over the currently usable pool. */
   async function currentCycle() {
     const usable = await usablePool()
-    const signature = JSON.stringify(usable.map((route) => [route.provider, route.model, route.weight]))
+    const signature = JSON.stringify([effective.spread === true, usable.map((route) => [route.provider, route.model, route.weight])])
     if (routeCache !== undefined && routeCache.signature === signature) return routeCache
-    const cycle = weightedCycle(usable)
+    const cycle = weightedCycle(usable, effective.spread === true)
     routeCache = { signature, usable, cycle }
     return routeCache
   }
@@ -351,6 +625,36 @@ export function apply(ctx, rawConfig) {
     const cached = await currentCycle()
     if (cached.usable.length === 0) return undefined
     return cached.usable[cached.cycle[ordinal % cached.cycle.length]]
+  }
+
+  /**
+   * Pick the route for one child. A recognized capability prefers the routes
+   * that advertise it (still rotating by weight inside that subset); otherwise
+   * the weighted spread cycle decides.
+   * @param {number} ordinal creation ordinal
+   * @param {'vision'|'code'|undefined} capability task hint
+   */
+  async function routeFor(ordinal, capability) {
+    const cached = await currentCycle()
+    if (cached.usable.length === 0) return undefined
+    if (capability !== undefined) {
+      const candidates = cached.usable.filter((route) => capabilityTagsFor(route).includes(capability))
+      if (candidates.length > 0) {
+        const cycle = weightedCycle(candidates, effective.spread === true)
+        return candidates[cycle[ordinal % cycle.length]]
+      }
+    }
+    return cached.usable[cached.cycle[ordinal % cached.cycle.length]]
+  }
+
+  /** Capability hint for one child, from its teammate name and the emphasis setting. */
+  function capabilityFor(teammateName) {
+    if (effective.capabilityRouting !== true) return undefined
+    const fromName = capabilityFromName(teammateName)
+    if (fromName !== undefined) return fromName
+    if (effective.emphasis === 'code') return 'code'
+    if (effective.emphasis === 'vision') return 'vision'
+    return undefined
   }
 
   /** Resolve a child Agent's Team membership and roster ordinal. */
@@ -436,11 +740,109 @@ export function apply(ctx, rawConfig) {
     return effort
   }
 
+  /** Human-readable pool used inside the Lead guidance section. */
+  function describePool() {
+    return effective.pool.map((entry) => `${entry.provider}/${entry.model}×${entry.weight}`).join(', ')
+  }
+
+  /** The system-prompt policy that makes the Lead open multiple teammates. */
+  function guidanceText() {
+    const emphasisLine =
+      effective.emphasis === 'code'
+        ? 'Unless a teammate is clearly visual, prefer the code/table route for unmatched work.'
+        : effective.emphasis === 'vision'
+          ? 'Unless a teammate is clearly code/table work, prefer the vision/UI route for unmatched work.'
+          : 'Match each teammate to its discipline; otherwise the weighted pool rotates.'
+    return [
+      '## Team balancer policy',
+      '',
+      'A team balancer is active in this session. It assigns every teammate its provider and model automatically from a weighted pool, preferring the model that fits the teammate\'s discipline. Never choose a model for a teammate, and never ask the user which model to use.',
+      `- Weighted pool: ${describePool()}. ${emphasisLine}`,
+      '- Name teammates by their primary discipline so the balancer can route them: `vision-*` for image, visual, screenshot/OCR, UI, frontend or design work; `code-*`, `table-*` or `data-*` for code, tables, data, SQL, API, refactoring, debugging or tests. Use a descriptive name for anything else.',
+      '- When a request has two or more independent workstreams (separate files or modules, separate research questions, separate verification angles), split it: call `spawn_teammate` once per workstream, typically 2-4 teammates. Give each one a complete brief, a disjoint write scope, and a clear deliverable; keep one owner per file.',
+      '- Combine discipline-specific teammates when the request mixes media: for example one `vision-*` teammate for screenshots/UI inspection and one `code-*` or `table-*` teammate for implementation, data or tables.',
+      '- Do the remaining integration and synthesis yourself. Do not serialize independent work inside one context when teammates can run in parallel.',
+      '- Keep small or tightly coupled tasks single-agent; do not create teammates just to look busy.',
+      '- Use `list_agents` to see teammates and their status, and `send_message` to steer or unblock one.',
+    ].join('\n')
+  }
+
+  /**
+   * Install the Lead-only prompt section through the Agent's own scope, the same
+   * way core plugins attach per-agent prompt content. Only root Agents (no
+   * parent Session) receive it, so teammates never see this policy.
+   */
+  function installGuidance(agent) {
+    if (disposed || guidanceFibers.has(agent)) return
+    if (parentSessionOf(agent) !== undefined) return
+    if (agent.ctx === undefined || typeof agent.ctx.inject !== 'function') return
+    try {
+      const fiber = agent.ctx.inject(['systemPrompt'], (scope) => {
+        scope.systemPrompt.section({
+          name: GUIDANCE_SECTION,
+          order: scope.systemPrompt.getSectionOrder('TEAM_POLICY') + 1,
+          text: () => {
+            if (effective.enabled !== true || effective.autoTeam !== true) return ''
+            guidanceRenders += 1
+            guidanceLastRenderedAt = now()
+            return guidanceText()
+          },
+        })
+      })
+      if (fiber !== undefined && fiber !== null) guidanceFibers.set(agent, fiber)
+    } catch (error) {
+      logger.warn(`team-balancer: failed to install the Lead policy section: ${describeError(error)}`)
+    }
+  }
+
+  /** Release one Agent's Lead policy section. */
+  function uninstallGuidance(agent) {
+    const fiber = guidanceFibers.get(agent)
+    if (fiber === undefined) return
+    guidanceFibers.delete(agent)
+    try {
+      const task = fiber.dispose()
+      if (task !== undefined && task !== null && typeof task.catch === 'function') {
+        void task.catch((error) => logger.warn(`team-balancer: policy section cleanup failed: ${describeError(error)}`))
+      }
+    } catch (error) {
+      logger.warn(`team-balancer: policy section cleanup failed: ${describeError(error)}`)
+    }
+  }
+
+  /** Install guidance on live Leads and assign live children that missed the event. */
+  function adoptLiveAgents() {
+    const agents = ctx.get('agents')
+    if (agents === undefined || typeof agents.list !== 'function') return
+    let live
+    try {
+      live = agents.list()
+    } catch (error) {
+      logger.warn(`team-balancer: agents.list failed during adoption: ${describeError(error)}`)
+      return
+    }
+    for (const agent of live) {
+      if (parentSessionOf(agent) === undefined) {
+        installGuidance(agent)
+        continue
+      }
+      void ensureAssignment(agent).catch((error) => logger.warn(`team-balancer: adoption failed: ${describeError(error)}`))
+    }
+  }
+
   /** Assign and remember one child Agent's route. */
   async function ensureAssignment(agent) {
-    if (disposed || effective.enabled !== true) return undefined
+    if (disposed) return undefined
     const existing = assignments.get(agent.id)
-    if (existing !== undefined) return existing
+    if (existing !== undefined) {
+      // A persisted assignment may survive a restart; reapply it to the live Agent.
+      if (effective.enabled === true) {
+        selectRoute(agent, existing)
+        publishRoute(agent, existing)
+      }
+      return existing
+    }
+    if (effective.enabled !== true) return undefined
     if (parentSessionOf(agent) === undefined) return undefined
     const teammate = teammateOf(agent)
     let kind
@@ -457,7 +859,8 @@ export function apply(ctx, rawConfig) {
     } else {
       return undefined
     }
-    const route = await routeForOrdinal(ordinal)
+    const capability = capabilityFor(teammateName)
+    const route = await routeFor(ordinal, capability)
     if (route === undefined) {
       logger.warn('team-balancer: no routable route in the pool right now; child keeps the inherited model')
       return undefined
@@ -469,14 +872,17 @@ export function apply(ctx, rawConfig) {
       ordinal,
       provider: route.provider,
       model: route.model,
+      ...(capability === undefined ? {} : { capability }),
       ...(effort === undefined ? {} : { reasoningEffort: effort }),
       ...(teammateName === undefined ? {} : { teammateName }),
       assignedAt: now(),
     }
     assignments.set(agent.id, record)
     publishRoute(agent, record)
+    writeAssignments()
     logger.info(
       `team-balancer: ${kind} ${teammateName === undefined ? String(agent.id).slice(0, 8) : `"${teammateName}"`} -> ${record.provider}/${record.model}` +
+        `${capability === undefined ? '' : ` [${capability}]`}` +
         `${usesAgentModelApi(agent) ? ' (agent.model.select)' : ' (agent/request)'}`,
     )
     return record
@@ -485,18 +891,16 @@ export function apply(ctx, rawConfig) {
   /**
    * Re-route children that can still change their step model: live idle Agents
    * are updated through the selection API, running ones keep the current model,
-   * and unloaded ones are re-assigned when their Session resumes.
+   * and dormant ones keep their persisted route until their Session resumes.
    */
   async function rebalanceIdleAssignments() {
     const agents = ctx.get('agents')
+    let changed = false
     for (const [agentId, record] of [...assignments]) {
       const agent = agents !== undefined && typeof agents.get === 'function' ? agents.get(agentId) : undefined
-      if (agent === undefined) {
-        assignments.delete(agentId)
-        continue
-      }
+      if (agent === undefined) continue
       if (agent.status === 'running') continue
-      const route = await routeForOrdinal(record.ordinal)
+      const route = await routeFor(record.ordinal, record.capability)
       if (route === undefined) continue
       const effort = selectRoute(agent, route)
       const next = {
@@ -508,24 +912,45 @@ export function apply(ctx, rawConfig) {
       else next.reasoningEffort = effort
       assignments.set(agentId, next)
       publishRoute(agent, next)
+      changed = true
     }
+    if (changed) writeAssignments()
   }
 
   /** Snapshot for the Web page. */
   async function stateSnapshot() {
     const [providers, routes] = await Promise.all([providerCatalog(), inspectedPool()])
+    const live = ctx.get('agents')
+    const isLive = (id) => live !== undefined && typeof live.get === 'function' && live.get(id) !== undefined
     return {
       ok: true,
-      pluginVersion: '0.2.0',
+      pluginVersion: VERSION,
       enabled: effective.enabled,
       includeSubagents: effective.includeSubagents,
+      autoTeam: effective.autoTeam,
+      spread: effective.spread,
+      capabilityRouting: effective.capabilityRouting,
+      emphasis: effective.emphasis,
+      capabilities: effective.pool.map((route) => ({
+        provider: route.provider,
+        model: route.model,
+        tags: capabilityTagsFor(route),
+      })),
       pool: effective.pool,
       defaults: baseConfig,
       stored,
       storagePath: storePath,
+      assignmentsPath,
       routes,
       providers,
-      assignments: [...assignments.values()].map((record) => ({ ...record })),
+      assignments: [...assignments.values()]
+        .sort((left, right) => left.assignedAt - right.assignedAt)
+        .map((record) => ({ ...record, active: isLive(record.agentId) })),
+      guidance: {
+        installed: guidanceFibers.size,
+        renders: guidanceRenders,
+        lastRenderedAt: guidanceLastRenderedAt,
+      },
       writeTime: now(),
     }
   }
@@ -554,10 +979,15 @@ export function apply(ctx, rawConfig) {
   async function onCreated(payload) {
     try {
       const agent = payload?.agent
-      if (agent === undefined || parentSessionOf(agent) === undefined) return
+      if (agent === undefined) return
+      // Root Agents (the Lead and plain chats) receive the delegation policy.
+      if (parentSessionOf(agent) === undefined) {
+        installGuidance(agent)
+        return
+      }
       await ensureAssignment(agent)
     } catch (error) {
-      logger.warn(`team-balancer: failed to assign a route: ${describeError(error)}`)
+      logger.warn(`team-balancer: failed to initialize an Agent: ${describeError(error)}`)
     }
   }
 
@@ -581,10 +1011,17 @@ export function apply(ctx, rawConfig) {
     return routeConfiguration(base, record)
   }
 
+  // Live Agents that entered before this plugin mounted still need guidance
+  // (Leads) or a restored route (children). Persistent assignments make this
+  // the normal path after a host restart or a plugin reload.
+  adoptLiveAgents()
+
   const offCreated = ctx.on('agent/created', onCreated)
   const offDisposed = ctx.on('agent/disposed', (payload) => {
     const agent = payload?.agent
-    if (agent !== undefined) assignments.delete(agent.id)
+    if (agent === undefined) return
+    // Keep the persisted route: the same Session id gets it back when resumed.
+    uninstallGuidance(agent)
   })
   const offRequest = ctx.on('agent/request', onRequest)
   const offAdapters = ctx.on('llm/adapters-updated', () => invalidate())
@@ -669,13 +1106,17 @@ export function apply(ctx, rawConfig) {
     offDisposed()
     offRequest()
     offAdapters()
-    assignments.clear()
+    for (const agent of [...guidanceFibers.keys()]) uninstallGuidance(agent)
+    guidanceFibers.clear()
     invalidate()
   }, 'team-balancer.registrations()')
 
   logger.info(
     `team-balancer: mounted (enabled=${String(effective.enabled)}, includeSubagents=${String(effective.includeSubagents)}, ` +
-      `pool=${effective.pool.map((entry) => `${entry.provider}/${entry.model}×${entry.weight}`).join(', ')}, store=${storePath})`,
+      `autoTeam=${String(effective.autoTeam)}, spread=${String(effective.spread)}, ` +
+      `capabilityRouting=${String(effective.capabilityRouting)}, emphasis=${String(effective.emphasis)}, ` +
+      `pool=${effective.pool.map((entry) => `${entry.provider}/${entry.model}×${entry.weight}`).join(', ')}, ` +
+      `assignments=${assignments.size}, store=${storePath})`,
   )
 }
 
