@@ -117,7 +117,7 @@ $DSH_HOME/storages/team-balancer/config.json
 | `capabilityRouting` | `true` | 按队友名字/侧重把视觉任务分给 GLM、代码表格任务分给 DeepSeek |
 | `emphasis` | `auto` | 名字看不出任务类型时的后备侧重：`auto`、`balanced`、`code`、`vision` |
 | `includeSubagents` | `false` | 是否也调度普通 `subagent` / `subagent_fork` |
-| `pool[].provider` | — | LLM provider 路由 id，如 `deepseek-official`、`zai` |
+| `pool[].provider` | — | LLM provider 路由 id，如 `deepseek-official`、`zai-coding-cn` |
 | `pool[].model` | — | 该 provider 下的模型 id |
 | `pool[].weight` | `1` | 1–100 的整数，参与平滑加权轮转 |
 | `pool[].reasoningEffort` | 不设置 | 该路由固定思考档位；不设置时切换供应商会清掉继承的 effort |

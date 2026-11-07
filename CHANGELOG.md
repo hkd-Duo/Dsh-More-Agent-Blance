@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-11-07
+
+### Changed
+
+- Factory default pool now ships three routes: `deepseek-official/deepseek-flash`,
+  `zai-coding-cn/glm-5.3-flash` and `zai-coding-cn/glm-5.3`, each weight 1 — with
+  `spread` on, the first pass gives every route one slot and the steady rotation is
+  GLM 2 : DeepSeek 1, matching profiles where the GLM quota is the larger one.
+
+### Fixed
+
+- The bundled default used the bare `zai` provider id, which has no adapter on
+  official profiles (the Zai provider mounts as `zai-coding-cn`); its route was
+  reported unavailable and silently skipped until manually re-saved. The stored
+  overrides from the panel continue to take precedence over these defaults.
+
 ## [0.3.1] - 2026-11-07
 
 ### Added

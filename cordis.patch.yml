@@ -30,10 +30,20 @@
         emphasis: auto
         # Weighted pool edited from the Web page. weight is a positive integer;
         # a route that is not currently routable is skipped at runtime.
+        #
+        # Factory pool: GLM carries 2/3 of the work, DeepSeek 1/3 (GLM 2 : 1).
+        # With `spread` on, the first pass gives each route one slot, so the
+        # first three teammates run deepseek-flash, glm-5.3-flash and glm-5.3
+        # before the cycle repeats. Note the provider id: the Zai provider
+        # mounts as `zai-coding-cn` on official profiles — the bare `zai` id
+        # has no adapter and its route would be skipped at runtime.
         pool:
           - provider: deepseek-official
             model: deepseek-flash
             weight: 1
-          - provider: zai
+          - provider: zai-coding-cn
             model: glm-5.3-flash
+            weight: 1
+          - provider: zai-coding-cn
+            model: glm-5.3
             weight: 1

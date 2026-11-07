@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-team-balancer",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Weighted multi-AI balancing for DeepSeek Harness Agent Teams: the Lead is told to split substantial tasks across 2-4 teammates, routes survive restarts, parallel work goes to an idle provider first, and teammates rotate across DeepSeek, GLM and other providers while the Lead keeps its own model. Edited from a first-class sidebar panel.",
   "license": "MIT",
   "author": "hkd-Duo",

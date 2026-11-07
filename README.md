@@ -136,7 +136,7 @@ $DSH_HOME/storages/team-balancer/config.json
 | `capabilityRouting` | `true` | Route vision/UI teammates to GLM and code/table teammates to DeepSeek by name. |
 | `emphasis` | `auto` | Fallback when a name reveals nothing: `auto`, `balanced`, `code`, `vision`. |
 | `includeSubagents` | `false` | Also balance ordinary `subagent` / `subagent_fork` children. |
-| `pool[].provider` | — | LLM provider route id, e.g. `deepseek-official`, `zai`. |
+| `pool[].provider` | — | LLM provider route id, e.g. `deepseek-official`, `zai-coding-cn`. |
 | `pool[].model` | — | Model id under that provider. |
 | `pool[].weight` | `1` | Positive integer 1–100 used by smooth weighted round robin. |
 | `pool[].reasoningEffort` | unset | Optional fixed effort for the route; when unset, switching providers clears the inherited effort. |
